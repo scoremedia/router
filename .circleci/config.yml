@@ -29,18 +29,6 @@ executors:
     resource_class: xlarge
     environment:
       CARGO_BUILD_JOBS: 4
-  arm_linux_build: &arm_linux_build_executor
-    machine:
-      image: ubuntu-2004:2024.01.1
-    resource_class: arm.large
-    environment:
-      CARGO_BUILD_JOBS: 8
-  arm_linux_test: &arm_linux_test_executor
-    machine:
-      image: ubuntu-2004:2024.01.1
-    resource_class: arm.xlarge
-    environment:
-      CARGO_BUILD_JOBS: 8
   macos_build: &macos_build_executor
     macos:
       # See https://circleci.com/docs/xcode-policy along with the support matrix
@@ -53,22 +41,12 @@ executors:
       # See https://circleci.com/docs/xcode-policy along with the support matrix
       # at https://circleci.com/docs/using-macos#supported-xcode-versions.
       # We use the major.minor notation to bring in compatible patches.
-      # 
+      #
       # TODO: remove workaround added in https://github.com/apollographql/router/pull/5462
-      # once we update to Xcode >= 15.1.0 
+      # once we update to Xcode >= 15.1.0
       # See: https://github.com/apollographql/router/pull/5462
       xcode: "14.2.0"
     resource_class: macos.m1.large.gen1
-  windows_build: &windows_build_executor
-    machine:
-      image: "windows-server-2019-vs2019:2024.02.21"
-    resource_class: windows.xlarge
-    shell: bash.exe --login -eo pipefail
-  windows_test: &windows_test_executor
-    machine:
-      image: "windows-server-2019-vs2019:2024.02.21"
-    resource_class: windows.xlarge
-    shell: bash.exe --login -eo pipefail
 
 # We don't use {{ arch }} because on windows it is unstable https://discuss.circleci.com/t/value-of-arch-unstable-on-windows/40079
 parameters:
@@ -156,16 +134,6 @@ commands:
       - when:
           condition:
             or:
-              - equal: [ *arm_linux_build_executor, << parameters.platform >> ]
-              - equal: [ *arm_linux_test_executor, << parameters.platform >> ]
-          steps:
-            - run:
-                name: Write arch
-                command: |
-                  echo 'arm_linux' >> ~/.arch
-      - when:
-          condition:
-            or:
               - equal: [ *macos_build_executor, << parameters.platform >> ]
               - equal: [ *macos_test_executor, << parameters.platform >> ]
           steps:
@@ -178,22 +146,6 @@ commands:
                 name: Write arch
                 command: |
                   echo 'osx' >> ~/.arch
-      - when:
-          condition:
-            or:
-              - equal: [ *windows_build_executor, << parameters.platform >> ]
-              - equal: [ *windows_test_executor, << parameters.platform >> ]
-          steps:
-            - run:
-                name: Create bash aliases
-                command: |
-                  echo 'alias find=/bin/find' >> "$BASH_ENV"
-                  echo 'alias sort=/bin/sort' >> "$BASH_ENV"
-                  echo 'export EXECUTABLE_SUFFIX=".exe"' >> "$BASH_ENV"
-            - run:
-                name: Write arch
-                command: |
-                  echo 'windows' >> ~/.arch
 
   # Create files that are useful for cache keys
   create_cache_keys:
@@ -224,8 +176,6 @@ commands:
             or:
               - equal: [ *amd_linux_build_executor, << parameters.platform >> ]
               - equal: [ *amd_linux_test_executor, << parameters.platform >> ]
-              - equal: [ *arm_linux_build_executor, << parameters.platform >> ]
-              - equal: [ *arm_linux_test_executor, << parameters.platform >> ]
           steps:
             - run:
                 name: Update and install dependencies
@@ -235,18 +185,6 @@ commands:
                     sudo apt-get --download-only -o Dir::Cache="$HOME/.deb" -o Dir::Cache::archives="$HOME/.deb" install libssl-dev libdw-dev cmake
                   fi
                   sudo dpkg -i $HOME/.deb/*.deb
-      - when:
-          condition:
-            or:
-              - equal: [ *windows_build_executor, << parameters.platform >> ]
-              - equal: [ *windows_test_executor, << parameters.platform >> ]
-          steps:
-            - run:
-                name: Install CMake
-                command: |
-                  choco install cmake.install -y
-                  echo 'export PATH="/c/Program Files/CMake/bin:$PATH"' >> "$BASH_ENV"
-                  exit $LASTEXITCODE
       - when:
           condition:
             or:
@@ -278,19 +216,6 @@ commands:
       - when:
           condition:
             or:
-              - equal: [ *arm_linux_build_executor, << parameters.platform >> ]
-              - equal: [ *arm_linux_test_executor, << parameters.platform >> ]
-          steps:
-            - run:
-                name: Install protoc
-                command: |
-                  if [[ ! -f "$HOME/.local/bin/protoc" ]]; then
-                    curl -L https://github.com/protocolbuffers/protobuf/releases/download/v<< pipeline.parameters.protoc_version >>/protoc-<< pipeline.parameters.protoc_version >>-linux-aarch_64.zip --output protoc.zip
-                    unzip protoc.zip -d $HOME/.local
-                  fi
-      - when:
-          condition:
-            or:
               - equal: [ *macos_build_executor, << parameters.platform >> ]
               - equal: [ *macos_test_executor, << parameters.platform >> ]
           steps:
@@ -299,19 +224,6 @@ commands:
                 command: |
                   if [[ ! -f "$HOME/.local/bin/protoc" ]]; then
                     curl -L https://github.com/protocolbuffers/protobuf/releases/download/v<< pipeline.parameters.protoc_version >>/protoc-<< pipeline.parameters.protoc_version >>-osx-universal_binary.zip --output protoc.zip
-                    unzip protoc.zip -d $HOME/.local
-                  fi
-      - when:
-          condition:
-            or:
-              - equal: [ *windows_build_executor, << parameters.platform >> ]
-              - equal: [ *windows_test_executor, << parameters.platform >> ]
-          steps:
-            - run:
-                name: Install protoc
-                command: |
-                  if [[ ! -f "$HOME/.local/bin/protoc$EXECUTABLE_SUFFIX" ]]; then
-                    curl -L https://github.com/protocolbuffers/protobuf/releases/download/v<< pipeline.parameters.protoc_version >>/protoc-<< pipeline.parameters.protoc_version >>-win64.zip --output protoc.zip
                     unzip protoc.zip -d $HOME/.local
                   fi
 
@@ -334,31 +246,12 @@ commands:
       - when:
           condition:
             or:
-              - equal: [ *windows_build_executor, << parameters.platform >> ]
-              - equal: [ *windows_test_executor, << parameters.platform >> ]
-          steps:
-            - run:
-                name: Special case for Windows because of ssh-agent
-                command: |
-                  printf "[net]\ngit-fetch-with-cli = true" >> ~/.cargo/Cargo.toml
-      - when:
-          condition:
-            or:
               - equal: [ *macos_build_executor, << parameters.platform >> ]
           steps:
             - run:
                 name: Special case for OSX x86_64 builds
                 command: |
                   rustup target add x86_64-apple-darwin
-
-      - when:
-          condition:
-            equal: [ *arm_linux_test_executor, << parameters.platform >> ]
-          steps:
-            - run:
-                name: Install nightly-2024-09-22 Rust to build the fuzzers
-                command: |
-                  rustup install nightly-2024-09-22
 
   install_extra_tools:
     steps:
@@ -502,7 +395,7 @@ commands:
             # Use the settings from the "ci" profile in nextest configuration.
             NEXTEST_PROFILE: ci
             # Temporary disable lib backtrace since it crashing on MacOS
-            # TODO: remove this workaround once we update to Xcode >= 15.1.0 
+            # TODO: remove this workaround once we update to Xcode >= 15.1.0
             # See: https://github.com/apollographql/router/pull/5462
             RUST_LIB_BACKTRACE: 0
           command: xtask test --workspace --locked --features ci
@@ -587,7 +480,6 @@ jobs:
           condition:
             and:
               - equal: [ true, << parameters.fuzz >> ]
-              - equal: [ *arm_linux_test_executor, << parameters.platform >> ]
           steps:
             - fuzz_build
 
@@ -705,8 +597,6 @@ jobs:
           condition:
             or:
               - equal: [ *amd_linux_build_executor, << parameters.platform >> ]
-              - equal: [ *arm_linux_build_executor, << parameters.platform >> ]
-              - equal: [ *windows_build_executor, << parameters.platform >> ]
           steps:
             # This will set the version to include current date and commit hash
             - when:
@@ -748,20 +638,20 @@ jobs:
                 command: |
                   # Source of the new image will be ser to the repo URL.
                   # This will have the effect of setting org.opencontainers.image.source and org.opencontainers.image.author to the originating pipeline
-                  # Therefore the docker image will have the same permissions as the originating project. 
+                  # Therefore the docker image will have the same permissions as the originating project.
                   # See: https://docs.github.com/en/packages/learn-github-packages/connecting-a-repository-to-a-package#connecting-a-repository-to-a-container-image-using-the-command-line
-                  
+
                   BASE_VERSION=$(cargo metadata --format-version=1 --no-deps | jq --raw-output '.packages[0].version')
                   ARTIFACT_URL="https://output.circle-artifacts.com/output/job/${CIRCLE_WORKFLOW_JOB_ID}/artifacts/0/artifacts/router-v${BASE_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
                   VERSION="v$(echo "${BASE_VERSION}" | tr "+" "-")"
                   ROUTER_TAG=ghcr.io/apollographql/nightly/router
-                  
+
                   echo "REPO_URL: ${REPO_URL}"
                   echo "BASE_VERSION: ${BASE_VERSION}"
                   echo "ARTIFACT_URL: ${ARTIFACT_URL}"
                   echo "VERSION: ${VERSION}"
                   echo "ROUTER_TAG: ${ROUTER_TAG}"
-                  
+
                   # Create a multi-arch builder which works properly under qemu
                   docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
                   docker context create buildx-build
@@ -985,7 +875,7 @@ workflows:
           matrix:
             parameters:
               platform:
-                [ macos_test, windows_test, amd_linux_test, arm_linux_test ]
+                [ macos_test, amd_linux_test ]
 
   quick-nightly:
     when: << pipeline.parameters.quick_nightly >>
@@ -998,7 +888,7 @@ workflows:
           matrix:
             parameters:
               platform:
-                [ macos_build, windows_build, amd_linux_build, arm_linux_build ]
+                [ macos_build, amd_linux_build ]
   nightly:
     when: << pipeline.parameters.nightly >>
     jobs:
@@ -1032,7 +922,7 @@ workflows:
           matrix:
             parameters:
               platform:
-                [ macos_test, windows_test, amd_linux_test, arm_linux_test ]
+                [ macos_test, amd_linux_test ]
       - build_release:
           requires:
             - test
@@ -1044,7 +934,7 @@ workflows:
           matrix:
             parameters:
               platform:
-                [ macos_build, windows_build, amd_linux_build, arm_linux_build ]
+                [ macos_build, amd_linux_build ]
       - secops/wiz-docker:
           context:
             - platform-docker-ro
@@ -1122,7 +1012,7 @@ workflows:
           matrix:
             parameters:
               platform:
-                [ macos_test, windows_test, amd_linux_test, arm_linux_test ]
+                [ macos_test, amd_linux_test ]
           filters:
             branches:
               ignore: /.*/
@@ -1132,7 +1022,7 @@ workflows:
           matrix:
             parameters:
               platform:
-                [ macos_build, windows_build, amd_linux_build, arm_linux_build ]
+                [ macos_build, amd_linux_build ]
           filters:
             branches:
               ignore: /.*/
