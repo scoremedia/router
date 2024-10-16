@@ -465,13 +465,7 @@ impl Query {
                 _ => Ok(()),
             },
             executable::Type::Named(name) if name == "Int" => {
-                let opt = if input.is_i64() {
-                    input.as_i64().and_then(|i| i32::try_from(i).ok())
-                } else if input.is_u64() {
-                    input.as_i64().and_then(|i| i32::try_from(i).ok())
-                } else {
-                    None
-                };
+                let opt = input.as_i64();
 
                 // if the value is invalid, we do not insert it in the output object
                 // which is equivalent to inserting null
