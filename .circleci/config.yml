@@ -432,43 +432,11 @@ jobs:
     environment:
       <<: *common_job_environment
       RELEASE_BIN: router
-      APPLE_TEAM_ID: "YQK948L752"
-      APPLE_USERNAME: "opensource@apollographql.com"
       REPO_URL: << pipeline.project.git_url >>
     steps:
       - checkout
       - setup_environment:
           platform: << parameters.platform >>
-      - when:
-          condition:
-            or:
-              - equal: [ *macos_build_executor, << parameters.platform >> ]
-
-          steps:
-            - when:
-                condition:
-                  equal: [ true, << parameters.nightly >> ]
-                steps:
-                  - run: cargo xtask release prepare nightly
-            - run:
-                command: >
-                  cargo xtask dist --target aarch64-apple-darwin
-            - run:
-                command: >
-                  cargo xtask dist --target x86_64-apple-darwin
-            - run:
-                command: >
-                  mkdir -p artifacts
-            - run:
-                command: >
-                  cargo xtask package
-                  --target aarch64-apple-darwin
-                  --output artifacts/
-            - run:
-                command: >
-                  cargo xtask package
-                  --target x86_64-apple-darwin
-                  --output artifacts/
       - when:
           condition:
             or:
@@ -762,7 +730,7 @@ workflows:
           matrix:
             parameters:
               platform:
-                [ macos_build, amd_linux_build ]
+                [ amd_linux_build ]
           filters:
             branches:
               ignore: /.*/
