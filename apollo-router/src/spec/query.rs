@@ -12,6 +12,7 @@ use apollo_compiler::schema::ExtendedType;
 use apollo_compiler::ExecutableDocument;
 use derivative::Derivative;
 use indexmap::IndexSet;
+use itertools::Itertools;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json_bytes::ByteString;
@@ -466,6 +467,22 @@ impl Query {
             },
             executable::Type::Named(name) if name == "Int" => {
                 let opt = input.as_i64();
+
+                if opt.is_some_and(|i| i32::try_from(i).is_err()) {
+                    let formatted_path: String = path
+                        .iter()
+                        .map(|part| match part {
+                            ResponsePathElement::Index(_) => "[]",
+                            ResponsePathElement::Key(s) => s,
+                        })
+                        .join(".");
+
+                    tracing::warn!(
+                        path = formatted_path,
+                        "INT '{:?}' is larger than 32-bits and is not GraphQL spec-compliant.",
+                        opt
+                    )
+                }
 
                 // if the value is invalid, we do not insert it in the output object
                 // which is equivalent to inserting null
