@@ -3,7 +3,6 @@ version: 2.1
 # These "CircleCI Orbs" are reusable bits of configuration that can be shared
 # across projects.  See https://circleci.com/orbs/ for more information.
 orbs:
-  gh: circleci/github-cli@2.3.0
   secops: apollo/circleci-secops-orb@2.0.7
 
 executors:
@@ -469,7 +468,7 @@ jobs:
               - equal: [ *amd_linux_build_executor, << parameters.platform >> ]
               - equal: [ true, << parameters.nightly >> ]
               - matches:
-                  pattern: "^https:\\/\\/github\\.com\\/apollographql\\/router.*$"
+                  pattern: "^https:\\/\\/github\\.com\\/scoremedia\\/router.*$"
                   value: << pipeline.project.git_url >>
           steps:
             - setup_remote_docker:
@@ -520,7 +519,7 @@ jobs:
                 paths:
                   - "built-containers/*.tar"
 
-  publish_github_release:
+  publish_docker_release:
     docker:
       - image: cimg/base:stable
     resource_class: small
@@ -535,7 +534,7 @@ jobs:
           steps:
             - run:
                 command: >
-                  echo "Not publishing any github release."
+                  echo "Not publishing any docker release."
       - when:
           condition:
             equal: [ "https://github.com/scoremedia/router", << pipeline.project.git_url >> ]
@@ -548,7 +547,6 @@ jobs:
                 docker_layer_caching: true
             - attach_workspace:
                 at: artifacts
-            - gh/setup
             - run:
                 command: >
                   cd artifacts && sha256sum *.tar.gz > sha256sums.txt
@@ -558,19 +556,6 @@ jobs:
             - run:
                 command: >
                   cd artifacts && sha1sum *.tar.gz > sha1sums.txt
-            - run:
-                name: Create GitHub Release
-                command: >
-                  case "$VERSION" in
-
-                    # If the VERSION contains a dash, consider it a pre-release version.
-                    # This is in-line with SemVer's expectations/designations!
-                    *-*) gh release create $VERSION --prerelease --notes-file /dev/null --title $VERSION artifacts/* ;;
-
-                    # In all other cases, publish it as the latest version.
-                    *) gh release create $VERSION --notes-file /dev/null --title $VERSION artifacts/* ;;
-
-                  esac
             - run:
                 name: Docker build
                 command: |
@@ -736,7 +721,7 @@ workflows:
               ignore: /.*/
             tags:
               only: /v.*/
-      - publish_github_release:
+      - publish_docker_release:
           requires:
             - build_release
             - lint
