@@ -463,23 +463,11 @@ jobs:
                 command: >
                   cargo xtask package
                   --target aarch64-apple-darwin
-                  --apple-team-id ${APPLE_TEAM_ID}
-                  --apple-username ${APPLE_USERNAME}
-                  --cert-bundle-base64 ${MACOS_CERT_BUNDLE_BASE64}
-                  --cert-bundle-password ${MACOS_CERT_BUNDLE_PASSWORD}
-                  --keychain-password ${MACOS_KEYCHAIN_PASSWORD}
-                  --notarization-password ${MACOS_NOTARIZATION_PASSWORD}
                   --output artifacts/
             - run:
                 command: >
                   cargo xtask package
                   --target x86_64-apple-darwin
-                  --apple-team-id ${APPLE_TEAM_ID}
-                  --apple-username ${APPLE_USERNAME}
-                  --cert-bundle-base64 ${MACOS_CERT_BUNDLE_BASE64}
-                  --cert-bundle-password ${MACOS_CERT_BUNDLE_PASSWORD}
-                  --keychain-password ${MACOS_KEYCHAIN_PASSWORD}
-                  --notarization-password ${MACOS_NOTARIZATION_PASSWORD}
                   --output artifacts/
       - when:
           condition:
