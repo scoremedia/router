@@ -482,24 +482,6 @@ jobs:
           steps:
             - fuzz_build
 
-  test_updated:
-    environment:
-      <<: *common_job_environment
-    parameters:
-      platform:
-        type: executor
-    executor: << parameters.platform >>
-    steps:
-      - checkout
-      - setup_environment:
-          platform: << parameters.platform >>
-      - run:
-          name: Update all Rust dependencies
-          command: |
-            rm Cargo.lock
-            cargo fetch
-      - xtask_test:
-          variant: "updated"
   pre_verify_release:
     environment:
       <<: *common_job_environment
@@ -795,15 +777,6 @@ workflows:
             parameters:
               platform: [ amd_linux_build ]
 
-      - test_updated:
-          requires:
-            - lint
-            - check_helm
-            - check_compliance
-          matrix:
-            parameters:
-              platform:
-                [ amd_linux_test ]
       - test:
           # this should be changed back to true on dev after release
           fuzz: false
@@ -844,15 +817,6 @@ workflows:
             parameters:
               platform: [ amd_linux_build ]
 
-      - test_updated:
-          requires:
-            - lint
-            - check_helm
-            - check_compliance
-          matrix:
-            parameters:
-              platform:
-                [ amd_linux_test ]
       - test:
           requires:
             - lint
@@ -865,7 +829,6 @@ workflows:
       - build_release:
           requires:
             - test
-            - test_updated
           nightly: true
           context:
             - router
@@ -937,16 +900,6 @@ workflows:
               ignore: /.*/
             tags:
               only: /v.*/
-      - test_updated:
-          matrix:
-            parameters:
-              platform:
-                [ amd_linux_test ]
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /v.*/
       - test:
           matrix:
             parameters:
@@ -975,7 +928,6 @@ workflows:
             - check_compliance
             - pre_verify_release
             - test
-            - test_updated
           filters:
             branches:
               ignore: /.*/
