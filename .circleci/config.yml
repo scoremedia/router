@@ -504,10 +504,10 @@ jobs:
                   echo ${JFROG_ACCESS_TOKEN} | docker login thescore.jfrog.io -u ${JFROG_USERNAME} --password-stdin
                   # TODO: Can't figure out how to build multi-arch image from ARTIFACT_URL right now. Figure out later...
                   # Build and push debug image
-                  docker buildx build --load --platform linux/amd64 --build-arg CIRCLE_TOKEN="${CIRCLE_TOKEN}" --build-arg REPO_URL="${REPO_URL}" --build-arg ARTIFACT_URL="${ARTIFACT_URL}" --build-arg DEBUG_IMAGE="true" --build-arg ROUTER_RELEASE=${VERSION} -f dockerfiles/Dockerfile.router -t ${ROUTER_TAG}:${VERSION}-debug .
+                  docker buildx build --load --platform linux/amd64 --build-arg CIRCLE_TOKEN="${DOWNLOAD_ARTIFACT_TOKEN}" --build-arg REPO_URL="${REPO_URL}" --build-arg ARTIFACT_URL="${ARTIFACT_URL}" --build-arg DEBUG_IMAGE="true" --build-arg ROUTER_RELEASE=${VERSION} -f dockerfiles/Dockerfile.router -t ${ROUTER_TAG}:${VERSION}-debug .
                   docker push ${ROUTER_TAG}:${VERSION}-debug
                   # Build and push release image
-                  docker buildx build --load --platform linux/amd64 --build-arg CIRCLE_TOKEN="${CIRCLE_TOKEN}" --build-arg REPO_URL="${REPO_URL}" --build-arg ARTIFACT_URL="${ARTIFACT_URL}" --build-arg ROUTER_RELEASE=${VERSION} -f dockerfiles/Dockerfile.router -t ${ROUTER_TAG}:${VERSION} .
+                  docker buildx build --load --platform linux/amd64 --build-arg CIRCLE_TOKEN="${DOWNLOAD_ARTIFACT_TOKEN}" --build-arg REPO_URL="${REPO_URL}" --build-arg ARTIFACT_URL="${ARTIFACT_URL}" --build-arg ROUTER_RELEASE=${VERSION} -f dockerfiles/Dockerfile.router -t ${ROUTER_TAG}:${VERSION} .
                   docker push ${ROUTER_TAG}:${VERSION}
                   # save containers for analysis
                   mkdir built-containers
@@ -526,6 +526,9 @@ jobs:
     environment:
       <<: *common_job_environment
       VERSION: << pipeline.git.tag >>
+    parameters:
+      platform:
+        type: executor
     steps:
       - when:
           condition:
@@ -540,6 +543,8 @@ jobs:
             equal: [ "https://github.com/scoremedia/router", << pipeline.project.git_url >> ]
           steps:
             - checkout
+            - install_rust:
+                platform: << parameters.platform >>
             - setup_remote_docker:
                 # CircleCI Image Policy
                 #   https://circleci.com/docs/remote-docker-images-support-policy/
@@ -547,6 +552,8 @@ jobs:
                 docker_layer_caching: true
             - attach_workspace:
                 at: artifacts
+            - store_artifacts:
+                path: artifacts/
             - run:
                 command: >
                   cd artifacts && sha256sum *.tar.gz > sha256sums.txt
@@ -559,7 +566,18 @@ jobs:
             - run:
                 name: Docker build
                 command: |
+                  BASE_VERSION=$(cargo metadata --format-version=1 --no-deps | jq --raw-output '.packages[0].version')
+                  ARTIFACT_URL="https://output.circle-artifacts.com/output/job/${CIRCLE_WORKFLOW_JOB_ID}/artifacts/0/artifacts/router-v${BASE_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+                  VERSION="v$(echo "${BASE_VERSION}" | tr "+" "-")"
+
                   ROUTER_TAG=thescore.jfrog.io/docker-prod/apollo-router
+
+                  echo "REPO_URL: ${REPO_URL}"
+                  echo "BASE_VERSION: ${BASE_VERSION}"
+                  echo "ARTIFACT_URL: ${ARTIFACT_URL}"
+                  echo "VERSION: ${VERSION}"
+                  echo "ROUTER_TAG: ${ROUTER_TAG}"
+
                   # Create a multi-arch builder which works properly under qemu
                   docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
                   docker context create buildx-build
@@ -572,9 +590,9 @@ jobs:
                   docker manifest inspect ${ROUTER_TAG}:${VERSION}  > /dev/null && exit 1
                   docker manifest inspect ${ROUTER_TAG}:${VERSION}-debug  > /dev/null && exit 1
                   # Build and push debug image
-                  docker buildx build --platform linux/amd64,linux/arm64 --push --build-arg DEBUG_IMAGE="true" --build-arg ROUTER_RELEASE=${VERSION} -f dockerfiles/Dockerfile.router -t ${ROUTER_TAG}:${VERSION}-debug .
+                  docker buildx build --progress=plain --platform linux/amd64 --push --build-arg CIRCLE_TOKEN="${DOWNLOAD_ARTIFACT_TOKEN}" --build-arg REPO_URL="${REPO_URL}" --build-arg ARTIFACT_URL="${ARTIFACT_URL}" --build-arg DEBUG_IMAGE="true" --build-arg ROUTER_RELEASE=${VERSION} -f dockerfiles/Dockerfile.router -t ${ROUTER_TAG}:${VERSION}-debug .
                   # Build and push release image
-                  docker buildx build --platform linux/amd64,linux/arm64 --push --build-arg ROUTER_RELEASE=${VERSION} -f dockerfiles/Dockerfile.router -t ${ROUTER_TAG}:${VERSION} .
+                  docker buildx build --progress=plain --platform linux/amd64 --push --build-arg CIRCLE_TOKEN="${DOWNLOAD_ARTIFACT_TOKEN}" --build-arg REPO_URL="${REPO_URL}" --build-arg ARTIFACT_URL="${ARTIFACT_URL}" --build-arg ROUTER_RELEASE=${VERSION} -f dockerfiles/Dockerfile.router -t ${ROUTER_TAG}:${VERSION} .
 
 workflows:
   ci_checks:
@@ -722,6 +740,10 @@ workflows:
             tags:
               only: /v.*/
       - publish_docker_release:
+          matrix:
+            parameters:
+              platform:
+                [ amd_linux_build ]
           requires:
             - build_release
             - lint
