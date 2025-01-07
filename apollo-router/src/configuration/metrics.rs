@@ -49,6 +49,8 @@ impl Metrics {
         data.populate_user_plugins_instrument(configuration);
         data.populate_query_planner_experimental_parallelism(configuration);
         data.populate_deno_or_rust_mode_instruments(configuration);
+        data.populate_legacy_fragment_usage(configuration);
+
         data.into()
     }
 }
@@ -212,6 +214,14 @@ impl InstrumentData {
             "$.subgraph..response"
         );
         populate_config_instrument!(
+            apollo.router.config.rhai,
+            "$.rhai",
+            opt.scripts,
+            "$[?(@.scripts)]",
+            opt.main,
+            "$[?(@.main)]"
+        );
+        populate_config_instrument!(
             apollo.router.config.persisted_queries,
             "$.persisted_queries[?(@.enabled == true)]",
             opt.log_unknown,
@@ -308,7 +318,9 @@ impl InstrumentData {
             opt.subgraph.enabled,
             "$[?(@.subgraph.subgraphs..enabled)]",
             opt.subgraph.ttl,
-            "$[?(@.subgraph.all.ttl || @.subgraph.subgraphs..ttl)]"
+            "$[?(@.subgraph.all.ttl || @.subgraph.subgraphs..ttl)]",
+            opt.subgraph.invalidation.enabled,
+            "$[?(@.subgraph.all.invalidation.enabled || @.subgraph.subgraphs..invalidation.enabled)]"
         );
         populate_config_instrument!(
             apollo.router.config.telemetry,
@@ -486,6 +498,18 @@ impl InstrumentData {
         );
     }
 
+    pub(crate) fn populate_legacy_fragment_usage(&mut self, configuration: &Configuration) {
+        // Fragment generation takes precedence over fragment reuse. Only report when fragment reuse is *actually active*.
+        if configuration.supergraph.reuse_query_fragments == Some(true)
+            && !configuration.supergraph.generate_query_fragments
+        {
+            self.data.insert(
+                "apollo.router.config.reuse_query_fragments".to_string(),
+                (1, HashMap::new()),
+            );
+        }
+    }
+
     pub(crate) fn populate_query_planner_experimental_parallelism(
         &mut self,
         configuration: &Configuration,
@@ -541,11 +565,7 @@ impl InstrumentData {
             super::QueryPlannerMode::Both => "both",
             super::QueryPlannerMode::BothBestEffort => "both_best_effort",
             super::QueryPlannerMode::New => "new",
-        };
-        let experimental_introspection_mode = match configuration.experimental_introspection_mode {
-            super::IntrospectionMode::Legacy => "legacy",
-            super::IntrospectionMode::Both => "both",
-            super::IntrospectionMode::New => "new",
+            super::QueryPlannerMode::NewBestEffort => "new_best_effort",
         };
 
         self.data.insert(
@@ -553,13 +573,6 @@ impl InstrumentData {
             (
                 1,
                 HashMap::from_iter([("mode".to_string(), experimental_query_planner_mode.into())]),
-            ),
-        );
-        self.data.insert(
-            "apollo.router.config.experimental_introspection_mode".to_string(),
-            (
-                1,
-                HashMap::from_iter([("mode".to_string(), experimental_introspection_mode.into())]),
             ),
         );
     }
@@ -595,7 +608,6 @@ mod test {
 
     use crate::configuration::metrics::InstrumentData;
     use crate::configuration::metrics::Metrics;
-    use crate::configuration::IntrospectionMode;
     use crate::configuration::QueryPlannerMode;
     use crate::uplink::license_enforcement::LicenseState;
     use crate::Configuration;
@@ -676,7 +688,6 @@ mod test {
     fn test_experimental_mode_metrics() {
         let mut data = InstrumentData::default();
         data.populate_deno_or_rust_mode_instruments(&Configuration {
-            experimental_introspection_mode: IntrospectionMode::Legacy,
             experimental_query_planner_mode: QueryPlannerMode::Both,
             ..Default::default()
         });
@@ -688,10 +699,7 @@ mod test {
     fn test_experimental_mode_metrics_2() {
         let mut data = InstrumentData::default();
         // Default query planner value should still be reported
-        data.populate_deno_or_rust_mode_instruments(&Configuration {
-            experimental_introspection_mode: IntrospectionMode::New,
-            ..Default::default()
-        });
+        data.populate_deno_or_rust_mode_instruments(&Configuration::default());
         let _metrics: Metrics = data.into();
         assert_non_zero_metrics_snapshot!();
     }
@@ -700,7 +708,6 @@ mod test {
     fn test_experimental_mode_metrics_3() {
         let mut data = InstrumentData::default();
         data.populate_deno_or_rust_mode_instruments(&Configuration {
-            experimental_introspection_mode: IntrospectionMode::New,
             experimental_query_planner_mode: QueryPlannerMode::New,
             ..Default::default()
         });

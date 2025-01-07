@@ -405,12 +405,34 @@ pub(crate) trait FallibleIterator: Sized + Itertools {
     {
         self.process_results(|mut results| results.find(predicate))
     }
+
+    fn fallible_fold<F, O, T, E>(&mut self, mut init: O, mut mapper: F) -> Result<O, E>
+    where
+        Self: Iterator<Item = T>,
+        F: FnMut(O, T) -> Result<O, E>,
+    {
+        for item in self {
+            init = mapper(init, item)?;
+        }
+        Ok(init)
+    }
+
+    fn and_then_fold<F, O, T, E>(&mut self, mut init: O, mut mapper: F) -> Result<O, E>
+    where
+        Self: Iterator<Item = Result<T, E>>,
+        F: FnMut(O, T) -> Result<O, E>,
+    {
+        for item in self {
+            init = mapper(init, item?)?
+        }
+        Ok(init)
+    }
 }
 
 impl<I: Itertools> FallibleIterator for I {}
 
 /// The struct returned by [fallible_filter](FallibleIterator::fallible_filter).
-pub struct FallibleFilter<I, F> {
+pub(crate) struct FallibleFilter<I, F> {
     iter: I,
     predicate: F,
 }
@@ -435,7 +457,7 @@ where
 }
 
 /// The struct returned by [and_then_filter](FallibleIterator::and_then_filter).
-pub struct AndThenFilter<I, F> {
+pub(crate) struct AndThenFilter<I, F> {
     iter: I,
     predicate: F,
 }
@@ -462,7 +484,7 @@ where
     }
 }
 
-pub struct AndThen<I, F> {
+pub(crate) struct AndThen<I, F> {
     iter: I,
     map: F,
 }
@@ -479,7 +501,7 @@ where
     }
 }
 
-pub struct OrElse<I, F> {
+pub(crate) struct OrElse<I, F> {
     iter: I,
     map: F,
 }
@@ -515,11 +537,13 @@ mod tests {
         i % 2 == 0
     }
 
+    #[test]
     fn test_fallible_filter() {
         let vals = (1..6).fallible_filter(|i| is_prime(*i));
         itertools::assert_equal(vals, vec![Err(()), Ok(2), Ok(3)]);
     }
 
+    #[test]
     fn test_and_then_filter() {
         let vals = vec![Ok(0), Err(()), Err(()), Ok(3), Ok(4)]
             .into_iter()
@@ -527,6 +551,7 @@ mod tests {
         itertools::assert_equal(vals, vec![Err(()), Err(()), Err(()), Ok(3)]);
     }
 
+    #[test]
     fn test_fallible_all() {
         assert_eq!(Ok(true), [].into_iter().fallible_all(is_prime));
         assert_eq!(Ok(true), (2..4).fallible_all(is_prime));
@@ -535,6 +560,7 @@ mod tests {
         assert_eq!(Err(()), (1..5).fallible_all(is_prime));
     }
 
+    #[test]
     fn test_ok_and_all() {
         let first_values: Vec<Item> = vec![];
         let second_values: Vec<Item> = vec![Ok(1), Err(())];
@@ -547,6 +573,7 @@ mod tests {
         assert_eq!(Err(()), fourth_values.into_iter().ok_and_all(is_even));
     }
 
+    #[test]
     fn test_and_then_all() {
         let first_values: Vec<Item> = vec![];
         let second_values: Vec<Item> = vec![Ok(0), Err(())];
@@ -563,6 +590,7 @@ mod tests {
         assert_eq!(Ok(false), sixth_values.into_iter().and_then_all(is_prime));
     }
 
+    #[test]
     fn test_fallible_any() {
         assert_eq!(Ok(false), [].into_iter().fallible_any(is_prime));
         assert_eq!(Ok(true), (2..5).fallible_any(is_prime));
@@ -571,6 +599,7 @@ mod tests {
         assert_eq!(Err(()), (1..5).fallible_any(is_prime));
     }
 
+    #[test]
     fn test_ok_and_any() {
         let first_values: Vec<Item> = vec![];
         let second_values: Vec<Item> = vec![Ok(0), Err(())];
@@ -583,6 +612,7 @@ mod tests {
         assert_eq!(Err(()), fourth_values.into_iter().ok_and_any(is_even));
     }
 
+    #[test]
     fn test_and_then_any() {
         let first_values: Vec<Item> = vec![];
         let second_values: Vec<Item> = vec![Ok(0), Err(())];

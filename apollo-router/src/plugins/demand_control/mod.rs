@@ -11,6 +11,7 @@ use apollo_compiler::schema::FieldLookupError;
 use apollo_compiler::validation::Valid;
 use apollo_compiler::validation::WithErrors;
 use apollo_compiler::ExecutableDocument;
+use apollo_federation::error::FederationError;
 use displaydoc::Display;
 use futures::future::Either;
 use futures::stream;
@@ -123,6 +124,8 @@ pub(crate) enum DemandControlError {
     SubgraphOperationNotInitialized(crate::query_planner::fetch::SubgraphOperationNotInitialized),
     /// {0}
     ContextSerializationError(String),
+    /// {0}
+    FederationError(FederationError),
 }
 
 impl IntoGraphQLErrors for DemandControlError {
@@ -163,6 +166,10 @@ impl IntoGraphQLErrors for DemandControlError {
                 .extension_code(self.code())
                 .message(self.to_string())
                 .build()]),
+            DemandControlError::FederationError(_) => Ok(vec![graphql::Error::builder()
+                .extension_code(self.code())
+                .message(self.to_string())
+                .build()]),
         }
     }
 }
@@ -175,6 +182,7 @@ impl DemandControlError {
             DemandControlError::QueryParseFailure(_) => "COST_QUERY_PARSE_FAILURE",
             DemandControlError::SubgraphOperationNotInitialized(e) => e.code(),
             DemandControlError::ContextSerializationError(_) => "COST_CONTEXT_SERIALIZATION_ERROR",
+            DemandControlError::FederationError(_) => "FEDERATION_ERROR",
         }
     }
 }
@@ -198,6 +206,12 @@ impl<'a> From<FieldLookupError<'a>> for DemandControlError {
                 ))
             }
         }
+    }
+}
+
+impl From<FederationError> for DemandControlError {
+    fn from(value: FederationError) -> Self {
+        DemandControlError::FederationError(value)
     }
 }
 
@@ -471,6 +485,7 @@ mod test {
     use apollo_compiler::ast;
     use apollo_compiler::validation::Valid;
     use apollo_compiler::ExecutableDocument;
+    use apollo_compiler::Schema;
     use futures::StreamExt;
     use schemars::JsonSchema;
     use serde::Deserialize;
@@ -482,7 +497,6 @@ mod test {
     use crate::plugins::demand_control::DemandControlContext;
     use crate::plugins::demand_control::DemandControlError;
     use crate::plugins::test::PluginTestHarness;
-    use crate::query_planner::fetch::QueryHash;
     use crate::services::execution;
     use crate::services::layers::query_analysis::ParsedDocument;
     use crate::services::layers::query_analysis::ParsedDocumentInner;
@@ -660,14 +674,14 @@ mod test {
     }
 
     fn context() -> Context {
-        let parsed_document = ParsedDocumentInner {
-            executable: Arc::new(Valid::assume_valid(ExecutableDocument::new())),
-            hash: Arc::new(QueryHash::default()),
-            ast: ast::Document::new(),
-        };
+        let schema = Schema::parse_and_validate("type Query { f: Int }", "").unwrap();
+        let ast = ast::Document::parse("{__typename}", "").unwrap();
+        let doc = ast.to_executable_validate(&schema).unwrap();
+        let parsed_document =
+            ParsedDocumentInner::new(ast, doc.into(), None, Default::default()).unwrap();
         let ctx = Context::new();
         ctx.extensions()
-            .with_lock(|mut lock| lock.insert(ParsedDocument::new(parsed_document)));
+            .with_lock(|mut lock| lock.insert::<ParsedDocument>(parsed_document));
         ctx
     }
 

@@ -40,7 +40,6 @@ use crate::plugins::telemetry::config_new::events::log_event;
 use crate::plugins::telemetry::config_new::events::SupergraphEventResponse;
 use crate::plugins::telemetry::consts::QUERY_PLANNING_SPAN_NAME;
 use crate::plugins::telemetry::tracing::apollo_telemetry::APOLLO_PRIVATE_DURATION_NS;
-use crate::plugins::telemetry::Telemetry;
 use crate::plugins::telemetry::LOGGING_DISPLAY_BODY;
 use crate::plugins::traffic_shaping::TrafficShaping;
 use crate::plugins::traffic_shaping::APOLLO_TRAFFIC_SHAPING;
@@ -171,20 +170,20 @@ async fn service_call(
     let body = req.supergraph_request.body();
     let variables = body.variables.clone();
 
-    let QueryPlannerResponse {
-        content,
-        context,
-        errors,
-    } = match plan_query(
+    let QueryPlannerResponse { content, errors } = match plan_query(
         planning,
         body.operation_name.clone(),
         context.clone(),
         schema.clone(),
+        // We cannot assume that the query is present as it may have been modified by coprocessors or plugins.
+        // There is a deeper issue here in that query analysis is doing a bunch of stuff that it should not and
+        // places the results in context. Therefore plugins that have modified the query won't actually take effect.
+        // However, this can't be resolved before looking at the pipeline again.
         req.supergraph_request
             .body()
             .query
             .clone()
-            .expect("query presence was checked before"),
+            .unwrap_or_default(),
     )
     .await
     {
@@ -210,7 +209,8 @@ async fn service_call(
     }
 
     match content {
-        Some(QueryPlannerContent::Response { response }) => Ok(
+        Some(QueryPlannerContent::Response { response })
+        | Some(QueryPlannerContent::CachedIntrospectionResponse { response }) => Ok(
             SupergraphResponse::new_from_graphql_response(*response, context),
         ),
         Some(QueryPlannerContent::IntrospectionDisabled) => {
@@ -233,9 +233,8 @@ async fn service_call(
                 let _ = lock.insert::<OperationLimits<u32>>(query_metrics);
             });
 
-            let operation_name = body.operation_name.clone();
-            let is_deferred = plan.is_deferred(operation_name.as_deref(), &variables);
-            let is_subscription = plan.is_subscription(operation_name.as_deref());
+            let is_deferred = plan.is_deferred(&variables);
+            let is_subscription = plan.is_subscription();
 
             if let Some(batching) = context
                 .extensions()
@@ -266,8 +265,7 @@ async fn service_call(
                     .extensions()
                     .with_lock(|lock| lock.get::<BatchQuery>().cloned());
                 if let Some(batch_query) = batch_query_opt {
-                    let query_hashes =
-                        plan.query_hashes(batching, operation_name.as_deref(), &variables)?;
+                    let query_hashes = plan.query_hashes(batching, &variables)?;
                     batch_query
                         .set_query_hashes(query_hashes)
                         .await
@@ -811,9 +809,7 @@ impl PluggableSupergraphServiceBuilder {
         // Activate the telemetry plugin.
         // We must NOT fail to go live with the new router from this point as the telemetry plugin activate interacts with globals.
         for (_, plugin) in self.plugins.iter() {
-            if let Some(telemetry) = plugin.as_any().downcast_ref::<Telemetry>() {
-                telemetry.activate();
-            }
+            plugin.activate();
         }
 
         // We need a non-fallible hook so that once we know we are going live with a pipeline we do final initialization.
