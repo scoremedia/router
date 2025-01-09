@@ -60,7 +60,7 @@ async fn test_trace_error() -> Result<(), BoxError> {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_basic() -> Result<(), BoxError> {
     if !graph_os_enabled() {
-        panic!("Error: test skipped because GraphOS is not enabled");
+        return Ok(());
     }
     let mock_server = mock_otlp_server(1..).await;
     let config = include_str!("fixtures/otlp.router.yaml")
@@ -113,7 +113,7 @@ async fn test_basic() -> Result<(), BoxError> {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_otlp_request_with_datadog_propagator() -> Result<(), BoxError> {
     if !graph_os_enabled() {
-        panic!("Error: test skipped because GraphOS is not enabled");
+        return Ok(());
     }
     let mock_server = mock_otlp_server(1..).await;
     let config = include_str!("fixtures/otlp_datadog_propagation.router.yaml")
@@ -144,7 +144,7 @@ async fn test_otlp_request_with_datadog_propagator() -> Result<(), BoxError> {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_otlp_request_with_datadog_propagator_no_agent() -> Result<(), BoxError> {
     if !graph_os_enabled() {
-        panic!("Error: test skipped because GraphOS is not enabled");
+        return Ok(());
     }
     let mock_server = mock_otlp_server(1..).await;
     let config = include_str!("fixtures/otlp_datadog_propagation_no_agent.router.yaml")
@@ -178,7 +178,7 @@ async fn test_otlp_request_with_datadog_propagator_no_agent() -> Result<(), BoxE
 async fn test_otlp_request_with_zipkin_trace_context_propagator_with_datadog(
 ) -> Result<(), BoxError> {
     if !graph_os_enabled() {
-        panic!("Error: test skipped because GraphOS is not enabled");
+        return Ok(());
     }
     let mock_server = mock_otlp_server(1..).await;
     let config = include_str!("fixtures/otlp_datadog_request_with_zipkin_propagator.router.yaml")
@@ -298,7 +298,7 @@ async fn test_otlp_request_with_zipkin_trace_context_propagator_with_datadog(
 #[tokio::test(flavor = "multi_thread")]
 async fn test_untraced_request_no_sample_datadog_agent() -> Result<(), BoxError> {
     if !graph_os_enabled() {
-        panic!("Error: test skipped because GraphOS is not enabled");
+        return Ok(());
     }
     let mock_server = mock_otlp_server(1..).await;
     let config = include_str!("fixtures/otlp_datadog_agent_no_sample.router.yaml")
@@ -333,7 +333,7 @@ async fn test_untraced_request_no_sample_datadog_agent() -> Result<(), BoxError>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_untraced_request_sample_datadog_agent() -> Result<(), BoxError> {
     if !graph_os_enabled() {
-        panic!("Error: test skipped because GraphOS is not enabled");
+        return Ok(());
     }
     let mock_server = mock_otlp_server(1..).await;
     let config = include_str!("fixtures/otlp_datadog_agent_sample.router.yaml")
@@ -368,7 +368,7 @@ async fn test_untraced_request_sample_datadog_agent() -> Result<(), BoxError> {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_untraced_request_sample_datadog_agent_unsampled() -> Result<(), BoxError> {
     if !graph_os_enabled() {
-        panic!("Error: test skipped because GraphOS is not enabled");
+        return Ok(());
     }
     let mock_server = mock_otlp_server(1..).await;
     let config = include_str!("fixtures/otlp_datadog_agent_sample_no_sample.router.yaml")
@@ -403,7 +403,7 @@ async fn test_untraced_request_sample_datadog_agent_unsampled() -> Result<(), Bo
 #[tokio::test(flavor = "multi_thread")]
 async fn test_priority_sampling_propagated() -> Result<(), BoxError> {
     if !graph_os_enabled() {
-        panic!("Error: test skipped because GraphOS is not enabled");
+        return Ok(());
     }
     let mock_server = mock_otlp_server(1..).await;
     let config = include_str!("fixtures/otlp_datadog_propagation.router.yaml")
