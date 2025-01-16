@@ -229,7 +229,7 @@ dependencies = [
 
 [[package]]
 name = "apollo-router"
-version = "1.57.1"
+version = "1.57.1-thescore.0"
 dependencies = [
  "access-json",
  "ahash",

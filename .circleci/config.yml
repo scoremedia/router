@@ -184,18 +184,6 @@ commands:
       - when:
           condition:
             or:
-              - equal: [ *windows_build_executor, << parameters.platform >> ]
-              - equal: [ *windows_test_executor, << parameters.platform >> ]
-          steps:
-            - run:
-                name: Install CMake
-                command: |
-                  choco install cmake.install -y
-                  echo 'export PATH="/c/Program Files/CMake/bin:$PATH"' >> "$BASH_ENV"
-                  exit $LASTEXITCODE
-      - when:
-          condition:
-            or:
               - equal: [ *macos_build_executor, << parameters.platform >> ]
               - equal: [ *macos_test_executor, << parameters.platform >> ]
           steps:
@@ -688,8 +676,6 @@ workflows:
       - test_updated:
           requires:
             - lint
-            - check_helm
-            - check_compliance
           matrix:
             parameters:
               platform:
@@ -699,7 +685,6 @@ workflows:
           fuzz: false
           requires:
             - lint
-            - check_compliance
           matrix:
             parameters:
               platform:
@@ -732,8 +717,6 @@ workflows:
       - test_updated:
           requires:
             - lint
-            - check_helm
-            - check_compliance
           matrix:
             parameters:
               platform:
@@ -741,8 +724,6 @@ workflows:
       - test:
           requires:
             - lint
-            - check_helm
-            - check_compliance
           matrix:
             parameters:
               platform:
@@ -750,7 +731,6 @@ workflows:
       - build_release:
           requires:
             - test
-            - test_updated
           nightly: true
           context:
             - router
@@ -851,10 +831,8 @@ workflows:
           requires:
             - build_release
             - lint
-            - check_compliance
             - pre_verify_release
             - test
-            - test_updated
           filters:
             branches:
               ignore: /.*/
