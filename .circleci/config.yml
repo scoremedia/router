@@ -745,7 +745,7 @@ workflows:
             - build_release
             # - lint
             # - check_compliance
-            - pre_verify_release
+            # - pre_verify_release
             # - test
           # filters:
             # branches:
