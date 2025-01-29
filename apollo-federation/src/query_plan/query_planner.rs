@@ -387,13 +387,16 @@ impl QueryPlanner {
             )
         };
 
-        let operation_compression = if self.config.generate_query_fragments {
-            SubgraphOperationCompression::GenerateFragments
-        } else if self.config.generate_query_fragments_v2 {
-            SubgraphOperationCompression::GenerateFragmentsV2
-        } else {
-            SubgraphOperationCompression::Disabled
-        };
+        //let operation_compression = if self.config.generate_query_fragments {
+        //    SubgraphOperationCompression::GenerateFragments
+        //} else if self.config.generate_query_fragments_v2 {
+        //    SubgraphOperationCompression::GenerateFragmentsV2
+        //} else {
+        //    SubgraphOperationCompression::Disabled
+        //};
+        //
+        let operation_compression = SubgraphOperationCompression::GenerateFragmentsV2;
+
         let mut processor = FetchDependencyGraphToQueryPlanProcessor::new(
             normalized_operation.variables.clone(),
             normalized_operation.directives.clone(),
