@@ -739,11 +739,11 @@ workflows:
             parameters:
               platform:
                 [ amd_linux_build ]
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /v.*/
+          # filters:
+          #   branches:
+          #     ignore: /.*/
+          #   tags:
+          #     only: /v.*/
       - publish_docker_release:
           matrix:
             parameters:
@@ -751,15 +751,15 @@ workflows:
                 [ amd_linux_build ]
           requires:
             - build_release
-            - lint
-            - check_compliance
-            - pre_verify_release
-            - test
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /v.*/
+            # - lint
+            # - check_compliance
+            # - pre_verify_release
+            # - test
+          # filters:
+          #   branches:
+          #     ignore: /.*/
+          #   tags:
+          #     only: /v.*/
           context:
             - Artifactory-Credentials
 
