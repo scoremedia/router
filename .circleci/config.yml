@@ -586,8 +586,8 @@ jobs:
                   echo ${JFROG_ACCESS_TOKEN} | docker login thescore.jfrog.io -u ${JFROG_USERNAME} --password-stdin
                   # To prevent overwrite, check to see if our images already exists
                   # If the manifest command succeeds, the images already exist
-                  docker manifest inspect ${ROUTER_TAG}:${VERSION}  > /dev/null && exit 1
-                  docker manifest inspect ${ROUTER_TAG}:${VERSION}-debug  > /dev/null && exit 1
+                  # docker manifest inspect ${ROUTER_TAG}:${VERSION}  > /dev/null && exit 1
+                  # docker manifest inspect ${ROUTER_TAG}:${VERSION}-debug  > /dev/null && exit 1
                   # Build and push debug image
                   docker buildx build --progress=plain --platform linux/amd64 --push --build-arg CIRCLE_TOKEN="${DOWNLOAD_ARTIFACT_TOKEN}" --build-arg REPO_URL="${REPO_URL}" --build-arg ARTIFACT_URL="${ARTIFACT_URL}" --build-arg DEBUG_IMAGE="true" --build-arg ROUTER_RELEASE=${VERSION} -f dockerfiles/Dockerfile.router -t ${ROUTER_TAG}:${VERSION}-debug .
                   # Build and push release image
