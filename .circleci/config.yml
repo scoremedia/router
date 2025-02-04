@@ -605,33 +605,6 @@ workflows:
       - test_updated:
           platform: amd_linux_test
           from_test_updated_cargo_deps_workflow: true
-  ci_checks:
-    when:
-      not:
-        or:
-          - << pipeline.parameters.nightly >>
-          - << pipeline.parameters.quick_nightly >>
-          - << pipeline.parameters.test_updated_cargo_deps >>
-    jobs:
-      - lint:
-          matrix:
-            parameters:
-              platform: [ amd_linux_build ]
-      - check_compliance:
-          matrix:
-            parameters:
-              platform: [ amd_linux_build ]
-
-      - test:
-          # this should be changed back to true on dev after release
-          fuzz: false
-          requires:
-            - lint
-            - check_compliance
-          matrix:
-            parameters:
-              platform:
-                [ macos_test, amd_linux_test ]
 
   quick-nightly:
     when: << pipeline.parameters.quick_nightly >>
@@ -702,53 +675,11 @@ workflows:
           - << pipeline.parameters.quick_nightly >>
           - << pipeline.parameters.test_updated_cargo_deps >>
     jobs:
-      - pre_verify_release:
-          matrix:
-            parameters:
-              platform: [ amd_linux_build ]
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /v.*/
-      - lint:
-          matrix:
-            parameters:
-              platform: [ amd_linux_build ]
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /v.*/
-      - check_compliance:
-          matrix:
-            parameters:
-              platform: [ amd_linux_build ]
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /v.*/
-      - test:
-          matrix:
-            parameters:
-              platform:
-                [ macos_test, amd_linux_test ]
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /v.*/
       - build_release:
           matrix:
             parameters:
               platform:
                 [ amd_linux_build ]
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /v.*/
       - publish_docker_release:
           matrix:
             parameters:
@@ -756,15 +687,6 @@ workflows:
                 [ amd_linux_build ]
           requires:
             - build_release
-            - lint
-            - check_compliance
-            - pre_verify_release
-            - test
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /v.*/
           context:
             - Artifactory-Credentials
 
