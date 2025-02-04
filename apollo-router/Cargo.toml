@@ -1,6 +1,6 @@
 [package]
 name = "apollo-router"
-version = "1.59.2-thescore.0"
+version = "1.59.2-thescore.js-bundle-updated"
 authors = ["Apollo Graph, Inc. <packages@apollographql.com>"]
 repository = "https://github.com/apollographql/router/"
 documentation = "https://docs.rs/apollo-router"
@@ -193,7 +193,8 @@ regex = "1.10.5"
 reqwest.workspace = true
 
 # note: this dependency should _always_ be pinned, prefix the version with an `=`
-router-bridge = "=0.6.4+v2.9.3"
+# router-bridge = "=0.6.4+v2.9.3"
+router-bridge = { path = "../router-bridge", version = "=0.6.4+v2.9.3" }
 
 rust-embed = { version = "8.4.0", features = ["include-exclude"] }
 rustls = "0.21.12"
