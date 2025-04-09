@@ -86,6 +86,10 @@ async fn test_subgraph_timeout() -> Result<(), BoxError> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_connector_timeout() -> Result<(), BoxError> {
+    if !graph_os_enabled() {
+        return Ok(());
+    }
+
     let mut router = IntegrationTest::builder()
         .config(format!(
             r#"
@@ -291,6 +295,10 @@ async fn test_subgraph_rate_limit() -> Result<(), BoxError> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_connector_rate_limit() -> Result<(), BoxError> {
+    if !graph_os_enabled() {
+        return Ok(());
+    }
+
     let mut router = IntegrationTest::builder()
         .config(format!(
             r#"
