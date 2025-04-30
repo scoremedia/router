@@ -24,20 +24,6 @@ executors:
     resource_class: 2xlarge
     environment:
       CARGO_BUILD_JOBS: 4
-  macos_build: &macos_build_executor
-    macos:
-      # See https://circleci.com/docs/xcode-policy along with the support matrix
-      # at https://circleci.com/docs/using-macos#supported-xcode-versions.
-      # We use the major.minor notation to bring in compatible patches.
-      xcode: "15.4.0"
-    resource_class: macos.m1.large.gen1
-  macos_test: &macos_test_executor
-    macos:
-      # See https://circleci.com/docs/xcode-policy along with the support matrix
-      # at https://circleci.com/docs/using-macos#supported-xcode-versions.
-      # We use the major.minor notation to bring in compatible patches.
-      xcode: "15.4.0"
-    resource_class: macos.m1.large.gen1
 
 # We don't use {{ arch }} because on windows it is unstable https://discuss.circleci.com/t/value-of-arch-unstable-on-windows/40079
 parameters:
@@ -128,21 +114,6 @@ commands:
                 name: Write arch
                 command: |
                   echo 'amd_linux' >> ~/.arch
-      - when:
-          condition:
-            or:
-              - equal: [ *macos_build_executor, << parameters.platform >> ]
-              - equal: [ *macos_test_executor, << parameters.platform >> ]
-          steps:
-            - run:
-                name: Make link to md5
-                command: |
-                  mkdir -p ~/.local/aliases
-                  ln -s /sbin/md5 ~/.local/aliases/md5sum
-            - run:
-                name: Write arch
-                command: |
-                  echo 'osx' >> ~/.arch
 
   # Create files that are useful for cache keys
   create_cache_keys:
@@ -202,19 +173,6 @@ commands:
                     curl -L https://github.com/protocolbuffers/protobuf/releases/download/v<< pipeline.parameters.protoc_version >>/protoc-<< pipeline.parameters.protoc_version >>-linux-x86_64.zip --output protoc.zip
                     unzip protoc.zip -d $HOME/.local
                   fi
-      - when:
-          condition:
-            or:
-              - equal: [ *macos_build_executor, << parameters.platform >> ]
-              - equal: [ *macos_test_executor, << parameters.platform >> ]
-          steps:
-            - run:
-                name: Install protoc
-                command: |
-                  if [[ ! -f "$HOME/.local/bin/protoc" ]]; then
-                    curl -L https://github.com/protocolbuffers/protobuf/releases/download/v<< pipeline.parameters.protoc_version >>/protoc-<< pipeline.parameters.protoc_version >>-osx-universal_binary.zip --output protoc.zip
-                    unzip protoc.zip -d $HOME/.local
-                  fi
 
   install_rust:
     parameters:
@@ -233,16 +191,6 @@ commands:
             export PATH="$HOME/.cargo/bin:$PATH"
             rustup toolchain install
             rustc -V
-
-      - when:
-          condition:
-            or:
-              - equal: [ *macos_build_executor, << parameters.platform >> ]
-          steps:
-            - run:
-                name: Special case for OSX x86_64 builds
-                command: |
-                  rustup target add x86_64-apple-darwin
 
   install_extra_tools:
     steps:
@@ -628,7 +576,7 @@ workflows:
           matrix:
             parameters:
               platform:
-                [ macos_test, amd_linux_test ]
+                [ amd_linux_test ]
 
   quick-nightly:
     when: << pipeline.parameters.quick_nightly >>
@@ -641,7 +589,7 @@ workflows:
           matrix:
             parameters:
               platform:
-                [ macos_build, amd_linux_build ]
+                [ amd_linux_build ]
   nightly:
     when: << pipeline.parameters.nightly >>
     jobs:
@@ -659,7 +607,7 @@ workflows:
           matrix:
             parameters:
               platform:
-                [ macos_test, amd_linux_test ]
+                [ amd_linux_test ]
       - build_release:
           requires:
             - test
@@ -670,7 +618,7 @@ workflows:
           matrix:
             parameters:
               platform:
-                [ macos_build, amd_linux_build ]
+                [ amd_linux_build ]
       - secops/wiz-docker:
           context:
             - platform-docker-ro
@@ -730,7 +678,7 @@ workflows:
           matrix:
             parameters:
               platform:
-                [ macos_test, amd_linux_test ]
+                [ amd_linux_test ]
           filters:
             branches:
               ignore: /.*/
