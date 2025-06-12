@@ -15,6 +15,13 @@ executors:
     environment:
       CARGO_BUILD_JOBS: 4
       RUST_TEST_THREADS: 6
+      MISE_ENV: ci
+  amd_linux_helm: &amd_linux_helm_executor
+    docker:
+      - image: ghcr.io/apollographql/ci-utility-docker-images/apollo-rust-builder:0.11.2
+    resource_class: small
+    environment:
+      MISE_ENV: ci
   amd_linux_test: &amd_linux_test_executor
     docker:
       - image: ghcr.io/apollographql/ci-utility-docker-images/apollo-rust-builder:0.11.2
@@ -23,6 +30,7 @@ executors:
       - image: ghcr.io/datadog/dd-apm-test-agent/ddapm-test-agent:v1.23.1
     resource_class: 2xlarge
     environment:
+      MISE_ENV: ci
       CARGO_BUILD_JOBS: 4
 
 # We don't use {{ arch }} because on windows it is unstable https://discuss.circleci.com/t/value-of-arch-unstable-on-windows/40079
@@ -60,7 +68,9 @@ common_job_environment: &common_job_environment
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   RUST_BACKTRACE: full
   CARGO_INCREMENTAL: 0
+  MISE_VERSION: v2025.5.8
 commands:
+
   setup_environment:
     parameters:
       platform:
@@ -133,47 +143,17 @@ commands:
       - when:
           condition:
             or:
+              - equal: [ *amd_linux_helm_executor, << parameters.platform >> ]
               - equal: [ *amd_linux_build_executor, << parameters.platform >> ]
               - equal: [ *amd_linux_test_executor, << parameters.platform >> ]
           steps:
             - run:
-                name: Update and install dependencies
+                name: Install mise
                 command: |
-                  if [[ ! -d "$HOME/.deb" ]]; then
-                    mkdir $HOME/.deb
-                    sudo apt-get update
-                    sudo apt-get --download-only -o Dir::Cache="$HOME/.deb" -o Dir::Cache::archives="$HOME/.deb" install build-essential libssl-dev libdw-dev
-                  fi
-                  sudo dpkg -i $HOME/.deb/*.deb
-
-  install_protoc:
-    parameters:
-      platform:
-        type: executor
-    steps:
-      - when:
-          condition:
-            or:
-              - equal: [ *amd_linux_build_executor, << parameters.platform >> ]
-              - equal: [ *amd_linux_test_executor, << parameters.platform >> ]
-
-  install_rust:
-    parameters:
-      platform:
-        type: executor
-    steps:
-      - run:
-          name: Install Rust
-          command: |
-            if [[ ! -d "$HOME/.cargo" ]]; then
-              curl https://sh.rustup.rs -sSf -o rustup.sh
-              chmod 755 ./rustup.sh
-              ./rustup.sh -y --profile minimal --component clippy --component rustfmt --default-toolchain none
-            fi
-            echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
-            export PATH="$HOME/.cargo/bin:$PATH"
-            rustup toolchain install
-            rustc -V
+                  curl https://mise.jdx.dev/install.sh | sh
+                  mise activate bash >> "$BASH_ENV"
+                  # --raw disables the terminal timer/progress bars, so if mise gets stuck,
+                  # it will not continue to produce output preventing CCI from timing it out
                   mise install --yes --raw
   fetch_dependencies:
     steps:
@@ -216,6 +196,54 @@ commands:
     steps:
       - run: xtask release pre-verify
               "${KUBECONFORM_INSTALL}/kubeconform" \
+
+  xtask_check_helm:
+    steps:
+      - run:
+          name: Validate helm manifests
+          command: |
+            # Create list of kube versions
+            CURRENT_KUBE_VERSIONS=$(curl -s -L https://raw.githubusercontent.com/kubernetes/website/main/data/releases/schedule.yaml \
+              | yq -o json '.' \
+              | jq --raw-output '.schedules[] | select((now | strftime("%Y-%m-%dT00:00:00Z")) as $date | .releaseDate < $date and .endOfLifeDate > $date) | select(.previousPatches != null) | .previousPatches[].release')
+
+            TEMPLATE_DIR=$(mktemp -d)
+            MINOR_VERSION="${kube_version%.*}"
+            SUCCEEDED=false
+
+            # For each k8s minor version (e.g.: 1.28) we will try to validate against the most recent patch release (e.g. 1.28.3)
+            # We use curl --head to check if support is available. If it isn't we then try the next most recent release.
+            # As soon as we find an available release we try to use it. If we don't find an available release for a minor version, then we will ignore that silently
+            for kube_version in ${CURRENT_KUBE_VERSIONS}; do
+              if [[ "${kube_version%.*}" == "${MINOR_VERSION}" ]]; then
+                if [[ ${SUCCEEDED} == true ]]; then
+                  continue
+                fi
+              else
+                MINOR_VERSION="${kube_version%.*}"
+                SUCCEEDED=false
+              fi
+
+              # Sometimes the database has not been updated with schema details. If that happens, just skip the kubeconform checks until the database is updated"
+              if ! curl --head --silent --output /dev/null  --fail "https://github.com/yannh/kubernetes-json-schema/tree/master/v${kube_version}"; then
+                echo "Skipping validation for kubernetes version: ${kube_version} until the schema database is updated."
+                continue
+              fi
+
+              echo "Validating against schema version: ${kube_version}"
+
+              # Use helm to template our chart against kube_version
+              helm template --kube-version "${kube_version}" router helm/chart/router --set autoscaling.enabled=true > "${TEMPLATE_DIR}/router-${kube_version}.yaml"
+
+              # Execute kubeconform on our templated charts to ensure they are good
+              kubeconform \
+                --kubernetes-version "${kube_version}" \
+                --strict \
+                --schema-location default \
+                --verbose \
+                "${TEMPLATE_DIR}/router-${kube_version}.yaml"
+              SUCCEEDED=true
+            done
 
   xtask_check_compliance:
     steps:
@@ -306,6 +334,23 @@ jobs:
           platform: << parameters.platform >>
       - xtask_lint
 
+  check_helm:
+    environment:
+      <<: *common_job_environment
+    parameters:
+      platform:
+        type: executor
+    executor: << parameters.platform >>
+    steps:
+      - when:
+          condition:
+            equal: [ *amd_linux_helm_executor, << parameters.platform >> ]
+          steps:
+            - checkout
+            - setup_environment:
+                platform: << parameters.platform >>
+            - xtask_check_helm
+
   check_compliance:
     environment:
       <<: *common_job_environment
@@ -337,12 +382,13 @@ jobs:
       - setup_environment:
           platform: << parameters.platform >>
       - xtask_test
-      - when:
-          condition:
-            and:
-              - equal: [ true, << parameters.fuzz >> ]
-          steps:
-            - fuzz_build
+      # Temporarily disable cargo-fuzz https://github.com/apollographql/router/pull/7488
+      # - when:
+      #     condition:
+      #       and:
+      #         - equal: [ true, << parameters.fuzz >> ]
+      #     steps:
+      #       - fuzz_build
 
   pre_verify_release:
     environment:
@@ -458,7 +504,7 @@ jobs:
 
   publish_docker_release:
     docker:
-      - image: cimg/base:stable
+      - image: ghcr.io/apollographql/ci-utility-docker-images/apollo-rust-builder:0.11.2
     resource_class: small
     environment:
       <<: *common_job_environment
@@ -680,10 +726,6 @@ workflows:
             tags:
               only: /v.*/
       - publish_docker_release:
-          matrix:
-            parameters:
-              platform:
-                [ amd_linux_build ]
           requires:
             - build_release
             - lint
