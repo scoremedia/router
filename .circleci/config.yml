@@ -678,15 +678,6 @@ workflows:
           - << pipeline.parameters.quick_nightly >>
           - << pipeline.parameters.test_updated_cargo_deps >>
     jobs:
-      - pre_verify_release:
-          matrix:
-            parameters:
-              platform: [ amd_linux_build ]
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /v.*/
       - lint:
           matrix:
             parameters:
@@ -730,7 +721,6 @@ workflows:
             - build_release
             - lint
             - check_compliance
-            - pre_verify_release
             - test
           filters:
             branches:
