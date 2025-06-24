@@ -4,24 +4,23 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use fred::clients::Pool as RedisPool;
+use fred::error::Error as RedisError;
+use fred::error::ErrorKind as RedisErrorKind;
 use fred::interfaces::EventInterface;
 #[cfg(test)]
 use fred::mocks::Mocks;
+use fred::prelude::Client as RedisClient;
 use fred::prelude::ClientLike;
 use fred::prelude::KeysInterface;
-use fred::prelude::RedisClient;
-use fred::prelude::RedisError;
-use fred::prelude::RedisErrorKind;
-use fred::prelude::RedisPool;
-use fred::types::ClusterRouting;
 use fred::types::Expiration;
-use fred::types::FromRedis;
-use fred::types::PerformanceConfig;
-use fred::types::ReconnectPolicy;
-use fred::types::RedisConfig;
-use fred::types::ScanResult;
-use fred::types::TlsConfig;
-use fred::types::TlsHostMapping;
+use fred::types::cluster::ClusterRouting;
+use fred::types::config::Config as RedisConfig;
+use fred::types::config::PerformanceConfig;
+use fred::types::config::ReconnectPolicy;
+// use fred::types::config::TlsConfig;
+// use fred::types::config::TlsHostMapping;
+use fred::types::scan::ScanResult;
 use futures::FutureExt;
 use futures::Stream;
 use tower::BoxError;
@@ -30,7 +29,6 @@ use url::Url;
 use super::KeyType;
 use super::ValueType;
 use crate::configuration::RedisCache;
-use crate::services::generate_tls_client_config;
 
 const SUPPORTED_REDIS_SCHEMES: [&str; 6] = [
     "redis",
@@ -73,7 +71,7 @@ where
     }
 }
 
-impl<K> From<RedisKey<K>> for fred::types::RedisKey
+impl<K> From<RedisKey<K>> for fred::types::Key
 where
     K: KeyType,
 {
@@ -91,13 +89,13 @@ where
     }
 }
 
-impl<V> FromRedis for RedisValue<V>
+impl<V> fred::types::FromValue for RedisValue<V>
 where
     V: ValueType,
 {
-    fn from_value(value: fred::types::RedisValue) -> Result<Self, RedisError> {
+    fn from_value(value: fred::types::Value) -> Result<Self, RedisError> {
         match value {
-            fred::types::RedisValue::Bytes(data) => {
+            fred::types::Value::Bytes(data) => {
                 serde_json::from_slice(&data).map(RedisValue).map_err(|e| {
                     RedisError::new(
                         RedisErrorKind::Parse,
@@ -105,7 +103,7 @@ where
                     )
                 })
             }
-            fred::types::RedisValue::String(s) => {
+            fred::types::Value::String(s) => {
                 serde_json::from_str(&s).map(RedisValue).map_err(|e| {
                     RedisError::new(
                         RedisErrorKind::Parse,
@@ -113,9 +111,7 @@ where
                     )
                 })
             }
-            fred::types::RedisValue::Null => {
-                Err(RedisError::new(RedisErrorKind::NotFound, "not found"))
-            }
+            fred::types::Value::Null => Err(RedisError::new(RedisErrorKind::NotFound, "not found")),
             _res => Err(RedisError::new(
                 RedisErrorKind::Parse,
                 "the data is the wrong type",
@@ -124,13 +120,13 @@ where
     }
 }
 
-impl<V> TryInto<fred::types::RedisValue> for RedisValue<V>
+impl<V> TryInto<fred::types::Value> for RedisValue<V>
 where
     V: ValueType,
 {
     type Error = RedisError;
 
-    fn try_into(self) -> Result<fred::types::RedisValue, Self::Error> {
+    fn try_into(self) -> Result<fred::types::Value, Self::Error> {
         let v = serde_json::to_vec(&self.0).map_err(|e| {
             tracing::error!("couldn't serialize value to redis {}. This is a bug in the router, please file an issue: https://github.com/apollographql/router/issues/new", e);
             RedisError::new(
@@ -139,7 +135,7 @@ where
             )
         })?;
 
-        Ok(fred::types::RedisValue::Bytes(v.into()))
+        Ok(fred::types::Value::Bytes(v.into()))
     }
 }
 
@@ -157,17 +153,17 @@ impl RedisCacheStorage {
             client_config.password = Some(password);
         }
 
-        if let Some(tls) = config.tls.as_ref() {
-            let tls_cert_store = tls.create_certificate_store().transpose()?;
-            let client_cert_config = tls.client_authentication.as_ref();
-            let tls_client_config = generate_tls_client_config(tls_cert_store, client_cert_config)?;
-            let connector = tokio_rustls::TlsConnector::from(Arc::new(tls_client_config));
+        // if let Some(tls) = config.tls.as_ref() {
+        //     let tls_cert_store = tls.create_certificate_store().transpose()?;
+        //     let client_cert_config = tls.client_authentication.as_ref();
+        //     let tls_client_config = generate_tls_client_config(tls_cert_store, client_cert_config)?;
+        //     let connector = fred_tokio_rustls::TlsConnector::from(Arc::new(tls_client_config));
 
-            client_config.tls = Some(TlsConfig {
-                connector: fred::types::TlsConnector::Rustls(connector),
-                hostnames: TlsHostMapping::None,
-            });
-        }
+        //     client_config.tls = Some(TlsConfig {
+        //         connector: fred::types::config::TlsConnector::Rustls(connector),
+        //         hostnames: TlsHostMapping::None,
+        //     });
+        // }
 
         Self::create_client(
             client_config,
@@ -367,7 +363,7 @@ impl RedisCacheStorage {
             let pipeline: fred::clients::Pipeline<RedisClient> = self.inner.next().pipeline();
             let key = self.make_key(key);
             let res = pipeline
-                .get::<fred::types::RedisValue, _>(&key)
+                .get::<fred::types::Value, _>(&key)
                 .await
                 .map_err(|e| {
                     if !e.is_not_found() {
@@ -380,12 +376,13 @@ impl RedisCacheStorage {
                 tracing::error!("could not queue GET command");
                 return None;
             }
-            let res: fred::types::RedisValue = pipeline
+            let res: fred::types::Value = pipeline
                 .expire(
                     &key,
                     self.ttl
                         .expect("we already checked the presence of ttl")
                         .as_secs() as i64,
+                    None,
                 )
                 .await
                 .map_err(|e| {
@@ -619,7 +616,7 @@ mod test {
             time: std::time::UNIX_EPOCH - std::time::Duration::new(1, 0),
         });
 
-        let as_value: Result<fred::types::RedisValue, _> = invalid_json_payload.try_into();
+        let as_value: Result<fred::types::Value, _> = invalid_json_payload.try_into();
 
         assert!(as_value.is_err());
     }

@@ -17,7 +17,7 @@ use http::header::ACCEPT;
 use http::header::CONTENT_TYPE;
 use http::header::{self};
 use http::response::Parts;
-use hyper_rustls::ConfigBuilderExt;
+// use hyper_rustls::ConfigBuilderExt;
 use itertools::Itertools;
 use mediatype::MediaType;
 use mediatype::names::APPLICATION;
@@ -25,7 +25,7 @@ use mediatype::names::JSON;
 use mime::APPLICATION_JSON;
 use opentelemetry::Key;
 use opentelemetry::KeyValue;
-use rustls::RootCertStore;
+// use rustls::RootCertStore;
 use serde::Serialize;
 use tokio::select;
 use tokio::sync::oneshot;
@@ -54,7 +54,7 @@ use crate::batching::BatchQueryInfo;
 use crate::batching::assemble_batch;
 use crate::configuration::Batching;
 use crate::configuration::BatchingMode;
-use crate::configuration::TlsClientAuth;
+// use crate::configuration::TlsClientAuth;
 use crate::error::FetchError;
 use crate::error::SubgraphBatchingError;
 use crate::graphql;
@@ -178,28 +178,28 @@ impl SubgraphService {
     }
 }
 
-pub(crate) fn generate_tls_client_config(
-    tls_cert_store: Option<RootCertStore>,
-    client_cert_config: Option<&TlsClientAuth>,
-) -> Result<rustls::ClientConfig, BoxError> {
-    let tls_builder = rustls::ClientConfig::builder().with_safe_defaults();
-    Ok(match (tls_cert_store, client_cert_config) {
-        (None, None) => tls_builder.with_native_roots().with_no_client_auth(),
-        (Some(store), None) => tls_builder
-            .with_root_certificates(store)
-            .with_no_client_auth(),
-        (None, Some(client_auth_config)) => tls_builder.with_native_roots().with_client_auth_cert(
-            client_auth_config.certificate_chain.clone(),
-            client_auth_config.key.clone(),
-        )?,
-        (Some(store), Some(client_auth_config)) => tls_builder
-            .with_root_certificates(store)
-            .with_client_auth_cert(
-                client_auth_config.certificate_chain.clone(),
-                client_auth_config.key.clone(),
-            )?,
-    })
-}
+// pub(crate) fn generate_tls_client_config(
+//     tls_cert_store: Option<RootCertStore>,
+//     client_cert_config: Option<&TlsClientAuth>,
+// ) -> Result<rustls::ClientConfig, BoxError> {
+//     let tls_builder = rustls::ClientConfig::builder().with_safe_defaults();
+//     Ok(match (tls_cert_store, client_cert_config) {
+//         (None, None) => tls_builder.with_native_roots().with_no_client_auth(),
+//         (Some(store), None) => tls_builder
+//             .with_root_certificates(store)
+//             .with_no_client_auth(),
+//         (None, Some(client_auth_config)) => tls_builder.with_native_roots().with_client_auth_cert(
+//             client_auth_config.certificate_chain.clone(),
+//             client_auth_config.key.clone(),
+//         )?,
+//         (Some(store), Some(client_auth_config)) => tls_builder
+//             .with_root_certificates(store)
+//             .with_client_auth_cert(
+//                 client_auth_config.certificate_chain.clone(),
+//                 client_auth_config.key.clone(),
+//             )?,
+//     })
+// }
 
 impl tower::Service<SubgraphRequest> for SubgraphService {
     type Response = SubgraphResponse;
