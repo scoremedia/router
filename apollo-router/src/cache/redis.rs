@@ -225,11 +225,7 @@ impl RedisCacheStorage {
             .with_connection_config(|config| {
                 config.internal_command_timeout = DEFAULT_INTERNAL_REDIS_TIMEOUT;
                 config.reconnect_on_auth_error = true;
-                config.tcp = fred::prelude::TcpConfig {
-                    #[cfg(target_os = "linux")]
-                    user_timeout: Some(timeout),
-                    ..Default::default()
-                };
+                config.tcp = fred::prelude::TcpConfig::default();
                 config.unresponsive = fred::types::config::UnresponsiveConfig {
                     max_timeout: Some(DEFAULT_INTERNAL_REDIS_TIMEOUT),
                     interval: Duration::from_secs(3),
