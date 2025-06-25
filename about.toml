@@ -11,7 +11,8 @@ accepted = [
     "MPL-2.0",
     "Unicode-3.0",
     "Unicode-DFS-2016",
-    "Zlib"
+    "Zlib",
+    "OpenSSL",
 ]
 
 # See https://github.com/EmbarkStudios/cargo-about/pull/216
@@ -22,10 +23,7 @@ private = { ignore = true }
 # Ignore dependencies used in tests only, test-log for example
 ignore-dev-dependencies = true
 
-workarounds = [
-    "ring",
-    "rustls",
-]
+workarounds = ["ring", "rustls"]
 
 [ring]
 accepted = ["OpenSSL"]
