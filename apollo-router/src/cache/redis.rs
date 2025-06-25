@@ -211,21 +211,15 @@ impl RedisCacheStorage {
         reset_ttl: bool,
         is_cluster: bool,
     ) -> Result<Self, BoxError> {
-        // let pooled_client = RedisPool::new(
-        //     client_config,
-        //     Some(PerformanceConfig {
-        //         default_command_timeout: timeout,
-        //         ..Default::default()
-        //     }),
-        //     None,
-        //     Some(ReconnectPolicy::new_exponential(0, 1, 2000, 5)),
-        //     pool_size,
-        // )?;
         let pooled_client = fred::types::Builder::from_config(client_config)
             .with_connection_config(|config| {
                 config.internal_command_timeout = DEFAULT_INTERNAL_REDIS_TIMEOUT;
                 config.reconnect_on_auth_error = true;
-                config.tcp = fred::prelude::TcpConfig::default();
+                config.tcp = fred::prelude::TcpConfig {
+                    #[cfg(target_os = "linux")]
+                    user_timeout: Some(timeout),
+                    ..Default::default()
+                };
                 config.unresponsive = fred::types::config::UnresponsiveConfig {
                     max_timeout: Some(DEFAULT_INTERNAL_REDIS_TIMEOUT),
                     interval: Duration::from_secs(3),
