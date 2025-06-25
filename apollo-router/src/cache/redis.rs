@@ -153,6 +153,7 @@ impl RedisCacheStorage {
             client_config.password = Some(password);
         }
 
+        assert!(config.tls.is_none(), "Tanner ripped out Redis TLS support.");
         // if let Some(tls) = config.tls.as_ref() {
         //     let tls_cert_store = tls.create_certificate_store().transpose()?;
         //     let client_cert_config = tls.client_authentication.as_ref();
