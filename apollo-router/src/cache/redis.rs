@@ -8,6 +8,7 @@ use fred::clients::Pool as RedisPool;
 use fred::error::Error as RedisError;
 use fred::error::ErrorKind as RedisErrorKind;
 use fred::interfaces::EventInterface;
+use fred::interfaces::HeartbeatInterface;
 #[cfg(test)]
 use fred::mocks::Mocks;
 use fred::prelude::Client as RedisClient;
@@ -16,7 +17,6 @@ use fred::prelude::KeysInterface;
 use fred::types::Expiration;
 use fred::types::cluster::ClusterRouting;
 use fred::types::config::Config as RedisConfig;
-use fred::types::config::PerformanceConfig;
 use fred::types::config::ReconnectPolicy;
 // use fred::types::config::TlsConfig;
 // use fred::types::config::TlsHostMapping;
@@ -38,6 +38,11 @@ const SUPPORTED_REDIS_SCHEMES: [&str; 6] = [
     "redis-sentinel",
     "rediss-sentinel",
 ];
+
+/// Timeout applied to internal Redis operations, such as TCP connection initialization, TLS handshakes, AUTH or HELLO, cluster health checks, etc.
+const DEFAULT_INTERNAL_REDIS_TIMEOUT: Duration = Duration::from_secs(5);
+/// Interval on which we send PING commands to the Redis servers.
+const REDIS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct RedisKey<K>(pub(crate) K)
@@ -206,17 +211,35 @@ impl RedisCacheStorage {
         reset_ttl: bool,
         is_cluster: bool,
     ) -> Result<Self, BoxError> {
-        let pooled_client = RedisPool::new(
-            client_config,
-            Some(PerformanceConfig {
-                default_command_timeout: timeout,
-                ..Default::default()
-            }),
-            None,
-            Some(ReconnectPolicy::new_exponential(0, 1, 2000, 5)),
-            pool_size,
-        )?;
-        let _handle = pooled_client.connect();
+        // let pooled_client = RedisPool::new(
+        //     client_config,
+        //     Some(PerformanceConfig {
+        //         default_command_timeout: timeout,
+        //         ..Default::default()
+        //     }),
+        //     None,
+        //     Some(ReconnectPolicy::new_exponential(0, 1, 2000, 5)),
+        //     pool_size,
+        // )?;
+        let pooled_client = fred::types::Builder::from_config(client_config)
+            .with_connection_config(|config| {
+                config.internal_command_timeout = DEFAULT_INTERNAL_REDIS_TIMEOUT;
+                config.reconnect_on_auth_error = true;
+                config.tcp = fred::prelude::TcpConfig {
+                    #[cfg(target_os = "linux")]
+                    user_timeout: Some(timeout),
+                    ..Default::default()
+                };
+                config.unresponsive = fred::types::config::UnresponsiveConfig {
+                    max_timeout: Some(DEFAULT_INTERNAL_REDIS_TIMEOUT),
+                    interval: Duration::from_secs(3),
+                };
+            })
+            .with_performance_config(|config| {
+                config.default_command_timeout = timeout;
+            })
+            .set_policy(ReconnectPolicy::new_exponential(0, 1, 2000, 5))
+            .build_pool(pool_size)?;
 
         for client in pooled_client.clients() {
             // spawn tasks that listen for connection close or reconnect events
@@ -224,23 +247,39 @@ impl RedisCacheStorage {
             let mut reconnect_rx = client.reconnect_rx();
 
             tokio::spawn(async move {
-                while let Ok(error) = error_rx.recv().await {
-                    tracing::error!("Client disconnected with error: {:?}", error);
+                loop {
+                    match error_rx.recv().await {
+                        Ok((error, Some(server))) => {
+                            tracing::error!(
+                                "Redis client disconnected from {server:?} with error: {error:?}",
+                            )
+                        }
+                        Ok((error, None)) => {
+                            tracing::error!("Redis client disconnected with error: {error:?}",)
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
                 }
             });
             tokio::spawn(async move {
-                while reconnect_rx.recv().await.is_ok() {
-                    tracing::info!("Redis client reconnected.");
+                loop {
+                    match reconnect_rx.recv().await {
+                        Ok(server) => tracing::info!("Redis client connected to {server:?}"),
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
                 }
             });
         }
 
-        // a TLS connection to a TCP Redis could hang, so we add a timeout
-        tokio::time::timeout(Duration::from_secs(5), pooled_client.wait_for_connect())
-            .await
-            .map_err(|_| {
-                RedisError::new(RedisErrorKind::Timeout, "timeout connecting to Redis")
-            })??;
+        let _handle = pooled_client.init().await?;
+        let heartbeat_clients = pooled_client.clone();
+        let _heartbeat_handle = tokio::spawn(async move {
+            heartbeat_clients
+                .enable_heartbeat(REDIS_HEARTBEAT_INTERVAL, false)
+                .await
+        });
 
         tracing::trace!("redis connection established");
         Ok(Self {
