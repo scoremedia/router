@@ -61,7 +61,8 @@ allow = [
     "Elastic-2.0",
     "Unicode-DFS-2016",
     "Unicode-3.0",
-    "Zlib"
+    "Zlib",
+    "OpenSSL"
 ]
 copyleft = "warn"
 allow-osi-fsf-free = "neither"
