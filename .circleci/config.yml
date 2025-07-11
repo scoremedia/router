@@ -724,11 +724,6 @@ workflows:
             parameters:
               platform:
                 [ amd_linux_build ]
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /v.*/
       - publish_docker_release:
           requires:
             - build_release
@@ -736,9 +731,6 @@ workflows:
             - check_compliance
             - pre_verify_release
             - test
-          filters:
-            branches:
-              - APPSEC-000
           context:
             - Artifactory-Credentials
             - GAR-Credentials
