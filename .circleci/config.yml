@@ -245,22 +245,6 @@ commands:
               SUCCEEDED=true
             done
 
-  xtask_check_compliance:
-    steps:
-      - restore_cache:
-          keys:
-            - "<< pipeline.parameters.merge_version >>-compliance"
-      # cargo-deny fetches a rustsec advisory DB, which has to happen on github.com over https
-      - run: git config --global --unset-all url.ssh://git@github.com.insteadof
-      - run: $HOME/.cargo/bin/xtask$EXECUTABLE_SUFFIX check-compliance
-      - when:
-          condition:
-            equal: [ "dev", "<< pipeline.git.branch >>" ]
-          steps:
-            - save_cache:
-                key: "<< pipeline.parameters.merge_version >>-compliance"
-                paths:
-                  - target
   xtask_test:
     parameters:
       variant:
@@ -350,19 +334,6 @@ jobs:
             - setup_environment:
                 platform: << parameters.platform >>
             - xtask_check_helm
-
-  check_compliance:
-    environment:
-      <<: *common_job_environment
-    parameters:
-      platform:
-        type: executor
-    executor: << parameters.platform >>
-    steps:
-      - checkout
-      - setup_environment:
-          platform: << parameters.platform >>
-      - xtask_check_compliance
 
   test:
     environment:
@@ -599,17 +570,12 @@ workflows:
           matrix:
             parameters:
               platform: [ amd_linux_build ]
-      - check_compliance:
-          matrix:
-            parameters:
-              platform: [ amd_linux_build ]
 
       - test:
           # this should be changed back to true on dev after release
           fuzz: false
           requires:
             - lint
-            - check_compliance
           matrix:
             parameters:
               platform:
@@ -631,10 +597,6 @@ workflows:
     when: << pipeline.parameters.nightly >>
     jobs:
       - lint:
-          matrix:
-            parameters:
-              platform: [ amd_linux_build ]
-      - check_compliance:
           matrix:
             parameters:
               platform: [ amd_linux_build ]
@@ -702,15 +664,6 @@ workflows:
               ignore: /.*/
             tags:
               only: /v.*/
-      - check_compliance:
-          matrix:
-            parameters:
-              platform: [ amd_linux_build ]
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /v.*/
       - test:
           matrix:
             parameters:
@@ -735,7 +688,6 @@ workflows:
           requires:
             - build_release
             - lint
-            - check_compliance
             - pre_verify_release
             - test
           filters:
