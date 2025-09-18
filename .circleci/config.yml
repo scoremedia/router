@@ -127,6 +127,8 @@ commands:
           command: |
             # The Rust index takes time to download. Update this daily.
             date +%j > ~/.daily_version
+            # The checksum of the xtask/src directory, so that when we make changes to xtask we cause a full rebuild
+            find xtask/src -type f | while read name; do md5sum $name; done | sort -k 2 | md5sum > ~/.xtask_version
             # The closest common ancestor to the default branch, so that test jobs can take advantage previous compiles
             git remote set-head origin -a
             TARGET_BRANCH=$(git rev-parse --abbrev-ref origin/HEAD)
@@ -452,7 +454,7 @@ jobs:
                   pattern: "^https:\\/\\/github\\.com\\/scoremedia\\/router.*$"
                   value: << pipeline.project.git_url >>
           steps:
-            - gcp-cli/setup:
+            - gcp-cli/setup
             - setup_remote_docker:
                 # CircleCI Image Policy
                 #   https://circleci.com/docs/remote-docker-images-support-policy/
@@ -555,8 +557,7 @@ jobs:
             - checkout
             - setup_environment:
                 platform: amd_linux_build
-            - gcp-cli/setup:
-                skip_install: true
+            - gcp-cli/setup
             - setup_remote_docker:
                 # CircleCI Image Policy
                 #   https://circleci.com/docs/remote-docker-images-support-policy/
@@ -604,9 +605,9 @@ jobs:
                   docker manifest inspect ${ROUTER_TAG}:${VERSION}  > /dev/null && exit 1
                   docker manifest inspect ${ROUTER_TAG}:${VERSION}-debug  > /dev/null && exit 1
                   # Build and push debug image
-                  docker buildx build --progress=plain --platform linux/amd64 --push --build-arg CIRCLE_TOKEN="${DOWNLOAD_ARTIFACT_TOKEN}" --build-arg REPO_URL="${REPO_URL}" --build-arg ARTIFACT_URL="${ARTIFACT_URL}" --build-arg DEBUG_IMAGE="true" --build-arg ROUTER_RELEASE=${VERSION} -f dockerfiles/Dockerfile.router -t ${ROUTER_TAG}:${VERSION}-debug .
+                  docker buildx build --no-cache --progress=plain --platform linux/amd64 --push --build-arg CIRCLE_TOKEN="${DOWNLOAD_ARTIFACT_TOKEN}" --build-arg REPO_URL="${REPO_URL}" --build-arg ARTIFACT_URL="${ARTIFACT_URL}" --build-arg DEBUG_IMAGE="true" --build-arg ROUTER_RELEASE=${VERSION} -f dockerfiles/Dockerfile.router -t ${ROUTER_TAG}:${VERSION}-debug .
                   # Build and push release image
-                  docker buildx build --progress=plain --platform linux/amd64 --push --build-arg CIRCLE_TOKEN="${DOWNLOAD_ARTIFACT_TOKEN}" --build-arg REPO_URL="${REPO_URL}" --build-arg ARTIFACT_URL="${ARTIFACT_URL}" --build-arg ROUTER_RELEASE=${VERSION} -f dockerfiles/Dockerfile.router -t ${ROUTER_TAG}:${VERSION} .
+                  docker buildx build --no-cache --progress=plain --platform linux/amd64 --push --build-arg CIRCLE_TOKEN="${DOWNLOAD_ARTIFACT_TOKEN}" --build-arg REPO_URL="${REPO_URL}" --build-arg ARTIFACT_URL="${ARTIFACT_URL}" --build-arg ROUTER_RELEASE=${VERSION} -f dockerfiles/Dockerfile.router -t ${ROUTER_TAG}:${VERSION} .
 
 
 workflows:
