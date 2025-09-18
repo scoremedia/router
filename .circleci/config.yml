@@ -43,6 +43,9 @@ parameters:
   toolchain_version:
     type: string
     default: '{{ checksum ".circleci/config.yml" }}-v3-{{ checksum "~/.arch" }}-{{ checksum ".config/mise/config.toml" }}-{{ checksum "rust-toolchain.toml" }}-{{ checksum "~/.daily_version" }}'
+  xtask_version:
+    type: string
+    default: '{{ checksum ".circleci/config.yml" }}-v3-{{ checksum "~/.arch" }}-{{ checksum ".config/mise/config.toml" }}-{{ checksum "rust-toolchain.toml" }}-{{ checksum "~/.xtask_version" }}'
   merge_version:
     type: string
     default: '{{ checksum ".circleci/config.yml" }}-v3-{{ checksum "~/.arch" }}-{{ checksum ".config/mise/config.toml" }}-{{ checksum "rust-toolchain.toml" }}-{{ checksum "~/.merge_version" }}'
@@ -92,6 +95,7 @@ commands:
             - ~/.cargo
             - ~/.rustup
             - ~/.local
+      - install_xtask
 
   # Even though all executors use bash there are a number of differences that can be taken care of up front.
   # Windows shell commands are found on the path before the linux subsystem commands, so use aliases to override.
@@ -157,6 +161,23 @@ commands:
       - run:
           name: Fetch dependencies
           command: cargo fetch --locked
+
+  install_xtask:
+    steps:
+      - restore_cache:
+          keys:
+            - "<< pipeline.parameters.xtask_version >>"
+      - run:
+          name: Install xtask
+          command: |
+            if [[ ! -f "$HOME/.cargo/bin/xtask$EXECUTABLE_SUFFIX" ]]; then
+              cargo install --locked --path xtask
+            fi
+      - save_cache:
+          key: "<< pipeline.parameters.xtask_version >>"
+          paths:
+            - ~/.cargo/bin/xtask
+            - ~/.cargo/bin/xtask.exe
 
   xtask_lint:
     steps:
@@ -432,7 +453,6 @@ jobs:
                   value: << pipeline.project.git_url >>
           steps:
             - gcp-cli/setup:
-                skip_install: true
             - setup_remote_docker:
                 # CircleCI Image Policy
                 #   https://circleci.com/docs/remote-docker-images-support-policy/
