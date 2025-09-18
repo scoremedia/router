@@ -265,7 +265,7 @@ dependencies = [
 
 [[package]]
 name = "apollo-router"
-version = "2.6.1"
+version = "2.6.1-thescore.0"
 dependencies = [
  "ahash",
  "anyhow",
