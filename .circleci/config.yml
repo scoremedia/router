@@ -1,774 +1,246 @@
 version: 2.1
 
-# Cache key bump: 3
+parameters:
+  org_slug:
+    type: string
+    default: "gh/scorebet"
+  extract_contexts:
+    type: boolean
+    default: false
 
-# These "CircleCI Orbs" are reusable bits of configuration that can be shared
-# across projects.  See https://circleci.com/orbs/ for more information.
 orbs:
-  secops: apollo/circleci-secops-orb@2.0.7
-  gcp-cli: circleci/gcp-cli@3.3.1
+  gcp-cli: circleci/gcp-cli@3.3.0
 
 executors:
-  amd_linux_build: &amd_linux_build_executor
+  cci-base:
+    working_directory: /tmp/workspace
     docker:
-      - image: ghcr.io/apollographql/ci-utility-docker-images/apollo-rust-builder:0.18.0
-    resource_class: xlarge
-    environment:
-      CARGO_BUILD_JOBS: 4
-      RUST_TEST_THREADS: 6
-      MISE_ENV: ci
-  amd_linux_helm: &amd_linux_helm_executor
-    docker:
-      - image: ghcr.io/apollographql/ci-utility-docker-images/apollo-rust-builder:0.18.0
-    resource_class: small
-    environment:
-      MISE_ENV: ci
-  amd_linux_test: &amd_linux_test_executor
-    docker:
-      - image: ghcr.io/apollographql/ci-utility-docker-images/apollo-rust-builder:0.18.0
-      - image: cimg/redis:7.4.5
-      - image: cimg/postgres:17.6
-        environment:
-          POSTGRES_USER: root
-          POSTGRES_DB: root
-      - image: openzipkin/zipkin:3.5.1
-      - image: ghcr.io/datadog/dd-apm-test-agent/ddapm-test-agent:v1.33.1
-    resource_class: 2xlarge
-    environment:
-      MISE_ENV: ci
-      CARGO_BUILD_JOBS: 4
-
-# We don't use {{ arch }} because on windows it is unstable https://discuss.circleci.com/t/value-of-arch-unstable-on-windows/40079
-parameters:
-  toolchain_version:
-    type: string
-    default: '{{ checksum ".circleci/config.yml" }}-v3-{{ checksum "~/.arch" }}-{{ checksum ".config/mise/config.toml" }}-{{ checksum "rust-toolchain.toml" }}-{{ checksum "~/.daily_version" }}'
-  merge_version:
-    type: string
-    default: '{{ checksum ".circleci/config.yml" }}-v3-{{ checksum "~/.arch" }}-{{ checksum ".config/mise/config.toml" }}-{{ checksum "rust-toolchain.toml" }}-{{ checksum "~/.merge_version" }}'
-  nightly:
-    type: boolean
-    default: false
-  coverage:
-    type: boolean
-    default: false
-  # quick_nightly will skip testing and only build the release artifacts.
-  quick_nightly:
-    type: boolean
-    default: false
-  test_updated_cargo_deps:
-    type: boolean
-    default: false
-
-# These are common environment variables that we want to set on on all jobs.
-# While these could conceivably be set on the CircleCI project settings'
-# as "Secrets", these are not really secrets, and its convenient to keep them in
-# code.  Also, most of our secrets are not necessary for _most_ of our jobs, so this enables
-# forks of the project to run their own tests on their own CircleCI deployments with no
-# additional configuration.
-common_job_environment: &common_job_environment
-  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-  RUST_BACKTRACE: full
-  CARGO_INCREMENTAL: 0
-  MISE_VERSION: v2025.7.26
-commands:
-  setup_environment:
-    parameters:
-      platform:
-        type: executor
-    steps:
-      - unify_environment:
-          platform: << parameters.platform >>
-      - create_cache_keys
-      - restore_cache:
-          keys:
-            - "<< pipeline.parameters.toolchain_version >>"
-      - install_mise:
-          platform: << parameters.platform >>
-      - fetch_dependencies
-      - save_cache:
-          key: "<< pipeline.parameters.toolchain_version >>"
-          paths:
-            - ~/.cargo
-            - ~/.rustup
-            - ~/.local
-
-  # Even though all executors use bash there are a number of differences that can be taken care of up front.
-  # Windows shell commands are found on the path before the linux subsystem commands, so use aliases to override.
-  # OSX doesn't seem to support aliases properly, so we use a symlink
-  unify_environment:
-    parameters:
-      platform:
-        type: executor
-    steps:
-      - run:
-          name: Setup path
-          command: echo 'export PATH="$HOME/.local/bin:$HOME/.local/aliases:$PATH"' >> "$BASH_ENV"
-      - when:
-          condition:
-            or:
-              - equal: [*amd_linux_build_executor, << parameters.platform >>]
-              - equal: [*amd_linux_test_executor, << parameters.platform >>]
-              - equal: [*amd_linux_helm_executor, << parameters.platform >>]
-          steps:
-            - run:
-                name: Write arch
-                command: |
-                  echo 'amd_linux' >> ~/.arch
-  # Create files that are useful for cache keys
-  create_cache_keys:
-    steps:
-      - run:
-          name: Create cache keys
-          command: |
-            # The Rust index takes time to download. Update this daily.
-            date +%j > ~/.daily_version
-            # The closest common ancestor to the default branch, so that test jobs can take advantage previous compiles
-            git remote set-head origin -a
-            TARGET_BRANCH=$(git rev-parse --abbrev-ref origin/HEAD)
-            echo "Target branch is ${TARGET_BRANCH}"
-            COMMON_ANCESTOR_REF=$(git merge-base HEAD "${TARGET_BRANCH}")
-            echo "Common ancestor is ${COMMON_ANCESTOR_REF}"
-            echo "${CIRCLE_PROJECT_REPONAME}-${COMMON_ANCESTOR_REF}" > ~/.merge_version
-
-  # Install mise for tool version management
-  install_mise:
-    parameters:
-      platform:
-        type: executor
-    steps:
-      - when:
-          condition:
-            or:
-              - equal: [ *amd_linux_helm_executor, << parameters.platform >> ]
-              - equal: [ *amd_linux_build_executor, << parameters.platform >> ]
-              - equal: [ *amd_linux_test_executor, << parameters.platform >> ]
-          steps:
-            - run:
-                name: Install mise
-                command: |
-                  curl https://mise.jdx.dev/install.sh | sh
-                  mise activate bash >> "$BASH_ENV"
-                  # --raw disables the terminal timer/progress bars, so if mise gets stuck,
-                  # it will not continue to produce output preventing CCI from timing it out
-                  mise install --yes --raw
-  fetch_dependencies:
-    steps:
-      - run:
-          name: Fetch dependencies
-          command: cargo fetch --locked
-
-  xtask_lint:
-    steps:
-      - restore_cache:
-          keys:
-            - "<< pipeline.parameters.merge_version >>-lint"
-      - run: cargo xtask lint
-      - when:
-          condition:
-            equal: ["dev", "<< pipeline.git.branch >>"]
-          steps:
-            - save_cache:
-                key: "<< pipeline.parameters.merge_version >>-lint"
-                paths:
-                  - target
-  xtask_release_preverify:
-    steps:
-      - run: xtask release pre-verify
-
-  xtask_check_helm:
-    steps:
-      - run:
-          name: Validate helm manifests
-          command: |
-            # Create list of kube versions
-            CURRENT_KUBE_VERSIONS=$(curl -s -L https://raw.githubusercontent.com/kubernetes/website/main/data/releases/schedule.yaml \
-              | yq -o json '.' \
-              | jq --raw-output '.schedules[] | select((now | strftime("%Y-%m-%dT00:00:00Z")) as $date | .releaseDate < $date and .endOfLifeDate > $date) | select(.previousPatches != null) | .previousPatches[].release')
-
-            TEMPLATE_DIR=$(mktemp -d)
-            MINOR_VERSION="${kube_version%.*}"
-            SUCCEEDED=false
-
-            # For each k8s minor version (e.g.: 1.28) we will try to validate against the most recent patch release (e.g. 1.28.3)
-            # We use curl --head to check if support is available. If it isn't we then try the next most recent release.
-            # As soon as we find an available release we try to use it. If we don't find an available release for a minor version, then we will ignore that silently
-            for kube_version in ${CURRENT_KUBE_VERSIONS}; do
-              if [[ "${kube_version%.*}" == "${MINOR_VERSION}" ]]; then
-                if [[ ${SUCCEEDED} == true ]]; then
-                  continue
-                fi
-              else
-                MINOR_VERSION="${kube_version%.*}"
-                SUCCEEDED=false
-              fi
-
-              # Sometimes the database has not been updated with schema details. If that happens, just skip the kubeconform checks until the database is updated"
-              if ! curl --head --silent --output /dev/null  --fail "https://github.com/yannh/kubernetes-json-schema/tree/master/v${kube_version}"; then
-                echo "Skipping validation for kubernetes version: ${kube_version} until the schema database is updated."
-                continue
-              fi
-
-              echo "Validating against schema version: ${kube_version}"
-
-              # Use helm to template our chart against kube_version
-              helm template --kube-version "${kube_version}" router helm/chart/router --set autoscaling.enabled=true > "${TEMPLATE_DIR}/router-${kube_version}.yaml"
-
-              # Execute kubeconform on our templated charts to ensure they are good
-              kubeconform \
-                --kubernetes-version "${kube_version}" \
-                --strict \
-                --schema-location default \
-                --verbose \
-                "${TEMPLATE_DIR}/router-${kube_version}.yaml"
-              SUCCEEDED=true
-            done
-
-  xtask_check_compliance:
-    steps:
-      - restore_cache:
-          keys:
-            - "<< pipeline.parameters.merge_version >>-compliance"
-      # cargo-deny fetches a rustsec advisory DB, which has to happen on github.com over https
-      - run: git config --global --unset-all url.ssh://git@github.com.insteadof
-      - run: cargo xtask check-compliance
-      - when:
-          condition:
-            equal: ["dev", "<< pipeline.git.branch >>"]
-          steps:
-            - save_cache:
-                key: "<< pipeline.parameters.merge_version >>-compliance"
-                paths:
-                  - target
-  xtask_test:
-    parameters:
-      variant:
-        type: string
-        default: "default"
-    steps:
-      - restore_cache:
-          keys:
-            - "<< pipeline.parameters.merge_version >>-test-<< parameters.variant >>"
-      - run:
-          name: Run tests
-          environment:
-            # Use the settings from the "ci" profile in nextest configuration.
-            NEXTEST_PROFILE: ci
-          command: |
-            cargo xtask test --workspace --locked --features ci,snapshot
-
-      - run:
-          name: Delete large files from cache
-          command: |
-            find target/debug/deps -type f -size +50M -delete
-            rm target/debug/router*
-      - when:
-          condition:
-            equal: ["dev", "<< pipeline.git.branch >>"]
-          steps:
-            - save_cache:
-                key: "<< pipeline.parameters.merge_version >>-test-<< parameters.variant >>"
-                paths:
-                  - target
-      - store_test_results:
-          # The results from nextest that power the CircleCI Insights.
-          path: ./target/nextest/ci/junit.xml
-  # Temporarily disable cargo-fuzz https://github.com/apollographql/router/pull/7488
-  # fuzz_build:
-  #   steps:
-  #     - run: cargo +nightly fuzz build
-  do_coverage:
-    parameters:
-      variant:
-        type: string
-        default: "default"
-    steps:
-      - run:
-          name: Run coverage
-          environment:
-            # Use the settings from the "ci" profile in nextest configuration.
-            NEXTEST_PROFILE: ci
-          command: cargo llvm-cov nextest --ignore-run-fail --codecov --output-path codecov_report.json
-      - run:
-          name: Upload coverage report
-          command: |
-            # Upload the coverage report to Codecov.
-            codecov-cli --auto-load-params-from CircleCI upload-process --file ./codecov_report.json --token "${CODECOV_TOKEN}"
-      - store_artifacts:
-          path: ./codecov_report.json
+      - image: cimg/gcp:2025.01
 
 jobs:
-  lint:
-    environment:
-      <<: *common_job_environment
-    parameters:
-      platform:
-        type: executor
-    executor: << parameters.platform >>
+  extract-contexts-and-variables:
+    executor: cci-base
     steps:
-      - checkout
-      - setup_environment:
-          platform: << parameters.platform >>
-      - xtask_lint
+      - run:
+          name: Setup GCP Authentication
+          command: |
+            if [ -z "$EMU_GCP_SA_KEY" ]; then
+              echo "EMU_GCP_SA_KEY environment variable is required"
+              exit 1
+            fi
+            echo "$EMU_GCP_SA_KEY" | base64 -d > /tmp/gcp-key.json
+            gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
 
-  check_helm:
-    environment:
-      <<: *common_job_environment
-    parameters:
-      platform:
-        type: executor
-    executor: << parameters.platform >>
-    steps:
-      - when:
-          condition:
-            equal: [*amd_linux_helm_executor, << parameters.platform >>]
-          steps:
-            - checkout
-            - setup_environment:
-                platform: << parameters.platform >>
-            - xtask_check_helm
+      - run:
+          name: Extract Project Environment Variables
+          command: |
+            echo "Extracting project environment variables..."
 
-  check_compliance:
-    environment:
-      <<: *common_job_environment
-    parameters:
-      platform:
-        type: executor
-    executor: << parameters.platform >>
-    steps:
-      - checkout
-      - setup_environment:
-          platform: << parameters.platform >>
-      - xtask_check_compliance
+            # Check required variables
+            if [ -z "$CIRCLECI_TOKEN" ]; then
+              echo "CIRCLECI_TOKEN environment variable is required"
+              exit 1
+            fi
 
-  test:
-    environment:
-      <<: *common_job_environment
-    parameters:
-      platform:
-        type: executor
-      fuzz:
-        type: boolean
-        default: false
-      coverage:
-        type: boolean
-        default: false
-    executor: << parameters.platform >>
-    steps:
-      - checkout
-      - setup_environment:
-          platform: << parameters.platform >>
-      - xtask_test
-      # Temporarily disable cargo-fuzz https://github.com/apollographql/router/pull/7488
-      # - when:
-      #     condition:
-      #       and:
-      #         - equal: [ true, << parameters.fuzz >> ]
-      #     steps:
-      #       - fuzz_build
+            if [ -z "$CIRCLE_PROJECT_USERNAME" ] || [ -z "$CIRCLE_PROJECT_REPONAME" ]; then
+              echo "CIRCLE_PROJECT_USERNAME and CIRCLE_PROJECT_REPONAME are required"
+              exit 1
+            fi
 
-  pre_verify_release:
-    environment:
-      <<: *common_job_environment
-    parameters:
-      platform:
-        type: executor
-    executor: << parameters.platform >>
-    steps:
-      - checkout
-      - setup_environment:
-          platform: << parameters.platform >>
-      - xtask_release_preverify
+            # Create project variables file
+            touch project-variables.env
 
-  build_release:
-    parameters:
-      platform:
-        type: executor
-      nightly:
-        type: boolean
-        default: false
-    executor: << parameters.platform >>
-    environment:
-      <<: *common_job_environment
-      RELEASE_BIN: router
-      REPO_URL: << pipeline.project.git_url >>
-    steps:
-      - checkout
-      - setup_environment:
-          platform: << parameters.platform >>
-      - when:
-          condition:
-            or:
-              - equal: [ *amd_linux_build_executor, << parameters.platform >> ]
-          steps:
-            # This will set the version to include current date and commit hash
-            - when:
-                condition:
-                  equal: [true, << parameters.nightly >>]
-                steps:
-                  - run: cargo xtask release prepare nightly
-            - run:
-                command: >
-                  cargo xtask dist
-            - run:
-                command: >
-                  mkdir -p artifacts
-            - run:
-                command: >
-                  cargo xtask package --output artifacts/
-      - persist_to_workspace:
-          root: artifacts
-          paths:
-            - "*"
-      - store_artifacts:
-          path: artifacts/
-      - when:
-          condition:
-            and:
-              - equal: [*amd_linux_build_executor, << parameters.platform >>]
-              - equal: [true, << parameters.nightly >>]
-              - matches:
-                  pattern: "^https:\\/\\/github\\.com\\/scoremedia\\/router.*$"
-                  value: << pipeline.project.git_url >>
-          steps:
-            - gcp-cli/setup
-            - setup_remote_docker:
-                # CircleCI Image Policy
-                #   https://circleci.com/docs/remote-docker-images-support-policy/
-                version: docker23
-                docker_layer_caching: true
-            - run:
-                name: Docker build
-                command: |
-                  # Source of the new image will be ser to the repo URL.
-                  # This will have the effect of setting org.opencontainers.image.source and org.opencontainers.image.author to the originating pipeline
-                  # Therefore the docker image will have the same permissions as the originating project.
-                  # See: https://docs.github.com/en/packages/learn-github-packages/connecting-a-repository-to-a-package#connecting-a-repository-to-a-container-image-using-the-command-line
+            # Get project environment variables via CircleCI API
+            API_URL="https://circleci.com/api/v2/project/gh/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}/envvar"
 
-                  BASE_VERSION=$(cargo metadata --format-version=1 --no-deps | jq --raw-output '.packages[0].version')
-                  ARTIFACT_FILENAME="router-v${BASE_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-                  ARTIFACT_URL="https://output.circle-artifacts.com/output/job/${CIRCLE_WORKFLOW_JOB_ID}/artifacts/0/artifacts/${ARTIFACT_FILENAME}"
-                  VERSION="v$(echo "${BASE_VERSION}" | tr "+" "-")"
-                  ROUTER_TAG=us-docker.pkg.dev/thescore-security/oci/docker/apollo-router-nightly
+            echo "Fetching project variables from: $API_URL"
 
-                  # Validate local artifact exists and calculate its checksum as a safety net
-                  if [ ! -f "artifacts/${ARTIFACT_FILENAME}" ]; then
-                    echo "Error: Local artifact not found: artifacts/${ARTIFACT_FILENAME}"
-                    exit 1
-                  fi
-                  LOCAL_ARTIFACT_SHA256SUM=$(sha256sum "artifacts/${ARTIFACT_FILENAME}" | cut -d' ' -f1)
-                  echo "Local artifact checksum: ${LOCAL_ARTIFACT_SHA256SUM}"
+            response=$(curl -s -H "Circle-Token: $CIRCLECI_TOKEN" "$API_URL")
 
-                  # Download the artifact and calculate its checksum
-                  echo "Downloading artifact to calculate checksum..."
-                  curl -sSL -H "Circle-Token: ${CIRCLE_TOKEN}" -o "router-artifact.tar.gz" "${ARTIFACT_URL}"
+            if [ $? -ne 0 ]; then
+              echo "Failed to fetch project environment variables"
+              exit 1
+            fi
 
-                  # Calculate checksum of the tarball (not the binary inside)
-                  ARTIFACT_URL_SHA256SUM=$(sha256sum "router-artifact.tar.gz" | cut -d' ' -f1)
-                  rm -f router-artifact.tar.gz
+            # Parse and extract project variables from items array
+            var_names=$(echo "$response" | grep -o '"name" : "[^"]*"' | cut -d'"' -f4)
 
-                  # Compare local vs remote artifact checksums
-                  if [ "${LOCAL_ARTIFACT_SHA256SUM}" != "${ARTIFACT_URL_SHA256SUM}" ]; then
-                    echo "Error: Local and remote artifact checksums don't match!"
-                    echo "Local:      ${LOCAL_ARTIFACT_SHA256SUM}"
-                    echo "Remote: ${ARTIFACT_URL_SHA256SUM}"
-                    exit 1
-                  fi
-                  echo "Local and remote artifact checksums match: ${LOCAL_ARTIFACT_SHA256SUM}"
+            if [ -z "$var_names" ]; then
+              echo "No project environment variables found"
+            else
+              echo "Found project environment variables:"
+              for var_name in $var_names; do
+                echo "- $var_name"
 
-                  echo "REPO_URL: ${REPO_URL}"
-                  echo "BASE_VERSION: ${BASE_VERSION}"
-                  echo "ARTIFACT_FILENAME: ${ARTIFACT_FILENAME}"
-                  echo "ARTIFACT_URL: ${ARTIFACT_URL}"
-                  echo "ARTIFACT_URL_SHA256SUM: ${ARTIFACT_URL_SHA256SUM}"
-                  echo "LOCAL_ARTIFACT_SHA256SUM: ${LOCAL_ARTIFACT_SHA256SUM}"
-                  echo "VERSION: ${VERSION}"
-                  echo "ROUTER_TAG: ${ROUTER_TAG}"
+                var_value=$(printenv "$var_name")
 
-                  # Create a multi-arch builder which works properly under qemu
-                  docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-                  docker context create buildx-build
-                  docker buildx create --driver docker-container --use buildx-build
-                  docker buildx inspect --bootstrap
+                if [ -n "$var_value" ]; then
+                  encoded_value=$(echo -n "$var_value" | base64 -w 0)
+                  echo "${var_name}=${encoded_value}" >> project-variables.env
+                  echo "Added ${var_name} to project-variables.env"
+                else
+                  echo "Warning: ${var_name} not available in current environment"
+                fi
+              done
+            fi
 
-                  echo $GCLOUD_SERVICE_KEY > ${HOME}/gcloud-service-key.json
-                  gcloud auth activate-service-account --key-file=${HOME}/gcloud-service-key.json
-                  gcloud auth configure-docker us-docker.pkg.dev --quiet || { echo "GCloud auth failed"; return 1; }
-                  # TODO: Can't figure out how to build multi-arch image from ARTIFACT_URL right now. Figure out later...
-                  # Build and push debug image
-                  docker buildx build --load --platform linux/amd64 --build-arg CIRCLE_TOKEN="${DOWNLOAD_ARTIFACT_TOKEN}" --build-arg REPO_URL="${REPO_URL}" --build-arg ARTIFACT_URL="${ARTIFACT_URL}" --build-arg DEBUG_IMAGE="true" --build-arg ROUTER_RELEASE=${VERSION} -f dockerfiles/Dockerfile.router -t ${ROUTER_TAG}:${VERSION}-debug .
-                  docker push ${ROUTER_TAG}:${VERSION}-debug
-                  # Build and push release image
-                  docker buildx build --load --platform linux/amd64 --build-arg CIRCLE_TOKEN="${DOWNLOAD_ARTIFACT_TOKEN}" --build-arg REPO_URL="${REPO_URL}" --build-arg ARTIFACT_URL="${ARTIFACT_URL}" --build-arg ROUTER_RELEASE=${VERSION} -f dockerfiles/Dockerfile.router -t ${ROUTER_TAG}:${VERSION} .
+            # Upload project variables file
+            REPO_NAME="${CIRCLE_PROJECT_REPONAME:-unknown-repo}"
+            gsutil cp project-variables.env gs://emu-migration-assets/cci/${REPO_NAME}-project-variables.env
+            echo "Uploaded project variables to gs://emu-migration-assets/cci/${REPO_NAME}-project-variables.env"
 
-                  docker push ${ROUTER_TAG}:${VERSION}
-                  # save containers for analysis
-                  mkdir built-containers
-                  docker save -o built-containers/router_${VERSION}-debug.tar ${ROUTER_TAG}:${VERSION}-debug
-                  docker save -o built-containers/router_${VERSION}.tar ${ROUTER_TAG}:${VERSION}
+      - run:
+          name: Extract Context Variables
+          command: |
+            # Check if context extraction is enabled
+            EXTRACT_CONTEXTS="<< pipeline.parameters.extract_contexts >>"
 
-            - persist_to_workspace:
-                root: .
-                paths:
-                  - "built-containers/*.tar"
-  publish_docker_release:
-    docker:
-      - image: ghcr.io/apollographql/ci-utility-docker-images/apollo-rust-builder:0.18.0
-    resource_class: small
-    environment:
-      <<: *common_job_environment
-      VERSION: << pipeline.git.tag >>
-    steps:
-      - when:
-          condition:
-            not:
-              equal: [ "https://github.com/scoremedia/router", << pipeline.project.git_url >> ]
-          steps:
-            - run:
-                command: >
-                  echo "Not publishing any docker release."
-      - when:
-          condition:
-            equal: [ "https://github.com/scoremedia/router", << pipeline.project.git_url >> ]
-          steps:
-            - checkout
-            - setup_environment:
-                platform: amd_linux_build
-            - gcp-cli/setup
-            - setup_remote_docker:
-                # CircleCI Image Policy
-                #   https://circleci.com/docs/remote-docker-images-support-policy/
-                version: 20.10.24
-                docker_layer_caching: true
-            - attach_workspace:
-                at: artifacts
-            - store_artifacts:
-                path: artifacts/
-            - run:
-                command: >
-                  cd artifacts && sha256sum *.tar.gz > sha256sums.txt
-            - run:
-                command: >
-                  cd artifacts && md5sum *.tar.gz > md5sums.txt
-            - run:
-                command: >
-                  cd artifacts && sha1sum *.tar.gz > sha1sums.txt
-            - run:
-                name: Docker build
-                command: |
-                  BASE_VERSION=$(cargo metadata --format-version=1 --no-deps | jq --raw-output '.packages[0].version')
-                  ARTIFACT_URL="https://output.circle-artifacts.com/output/job/${CIRCLE_WORKFLOW_JOB_ID}/artifacts/0/artifacts/router-v${BASE_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-                  VERSION="v$(echo "${BASE_VERSION}" | tr "+" "-")"
+            if [ "$EXTRACT_CONTEXTS" != "true" ]; then
+              echo "Context extraction is disabled. Set extract_contexts parameter to true to enable."
+              exit 0
+            fi
 
-                  ROUTER_TAG=us-docker.pkg.dev/thescore-security/oci/docker/apollo-router
+            echo "Extracting context environment variables..."
 
-                  echo "REPO_URL: ${REPO_URL}"
-                  echo "BASE_VERSION: ${BASE_VERSION}"
-                  echo "ARTIFACT_URL: ${ARTIFACT_URL}"
-                  echo "VERSION: ${VERSION}"
-                  echo "ROUTER_TAG: ${ROUTER_TAG}"
+            # Check required variables
+            if [ -z "$CIRCLECI_TOKEN" ]; then
+              echo "CIRCLECI_TOKEN environment variable is required"
+              exit 1
+            fi
 
-                  # Create a multi-arch builder which works properly under qemu
-                  docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-                  docker context create buildx-build
-                  docker buildx create --driver docker-container --use buildx-build
-                  docker buildx inspect --bootstrap
+            ORG_SLUG="<< pipeline.parameters.org_slug >>"
+            echo "Using organization slug: $ORG_SLUG"
 
-                  echo $GCLOUD_SERVICE_KEY > ${HOME}/gcloud-service-key.json
-                  gcloud auth activate-service-account --key-file=${HOME}/gcloud-service-key.json
-                  gcloud auth configure-docker us-docker.pkg.dev --quiet || { echo "GCloud auth failed"; return 1; }
-                  # To prevent overwrite, check to see if our images already exists
-                  # If the manifest command succeeds, the images already exist
-                  docker manifest inspect ${ROUTER_TAG}:${VERSION}  > /dev/null && exit 1
-                  docker manifest inspect ${ROUTER_TAG}:${VERSION}-debug  > /dev/null && exit 1
-                  # Build and push debug image
-                  docker buildx build --progress=plain --platform linux/amd64 --push --build-arg CIRCLE_TOKEN="${DOWNLOAD_ARTIFACT_TOKEN}" --build-arg REPO_URL="${REPO_URL}" --build-arg ARTIFACT_URL="${ARTIFACT_URL}" --build-arg DEBUG_IMAGE="true" --build-arg ROUTER_RELEASE=${VERSION} -f dockerfiles/Dockerfile.router -t ${ROUTER_TAG}:${VERSION}-debug .
-                  # Build and push release image
-                  docker buildx build --progress=plain --platform linux/amd64 --push --build-arg CIRCLE_TOKEN="${DOWNLOAD_ARTIFACT_TOKEN}" --build-arg REPO_URL="${REPO_URL}" --build-arg ARTIFACT_URL="${ARTIFACT_URL}" --build-arg ROUTER_RELEASE=${VERSION} -f dockerfiles/Dockerfile.router -t ${ROUTER_TAG}:${VERSION} .
+            # Get all contexts for the organization
+            CONTEXTS_API_URL="https://circleci.com/api/v2/context?owner-slug=${ORG_SLUG}"
 
+            echo "Fetching contexts from: $CONTEXTS_API_URL"
+
+            contexts_response=$(curl -s -H "Circle-Token: $CIRCLECI_TOKEN" "$CONTEXTS_API_URL")
+
+            if [ $? -ne 0 ]; then
+              echo "Failed to fetch contexts"
+              exit 1
+            fi
+
+            echo "Contexts API Response: $contexts_response"
+
+            # Extract context IDs and names from items array
+            # Parse each context item to get id and name pairs
+            context_ids=$(echo "$contexts_response" | grep -o '"id" : "[^"]*"' | cut -d'"' -f4)
+            context_names=$(echo "$contexts_response" | grep -o '"name" : "[^"]*"' | cut -d'"' -f4)
+
+            if [ -z "$context_ids" ] || [ -z "$context_names" ]; then
+              echo "No contexts found"
+            else
+              echo "Found contexts:"
+              # Convert to arrays and process together
+              echo "$context_ids" > /tmp/context_ids.txt
+              echo "$context_names" > /tmp/context_names.txt
+
+              paste /tmp/context_ids.txt /tmp/context_names.txt | while read -r context_id context_name; do
+                echo "Processing context: $context_name (ID: $context_id)"
+
+                # Create file for this context
+                context_file="${context_name}-context.env"
+                touch "$context_file"
+
+                # Get environment variables for this context
+                CONTEXT_VARS_API_URL="https://circleci.com/api/v2/context/${context_id}/environment-variable"
+
+                echo "Fetching variables for context $context_name from: $CONTEXT_VARS_API_URL"
+
+                context_vars_response=$(curl -s -H "Circle-Token: $CIRCLECI_TOKEN" "$CONTEXT_VARS_API_URL")
+
+                if [ $? -ne 0 ]; then
+                  echo "Failed to fetch variables for context $context_name"
+                  continue
+                fi
+
+                # Parse context variable names
+                context_var_names=$(echo "$context_vars_response" | grep -o '"variable" : "[^"]*"' | cut -d'"' -f4)
+
+                if [ -z "$context_var_names" ]; then
+                  echo "No variables found in context $context_name"
+                else
+                  echo "Variables in context $context_name:"
+                  for var_name in $context_var_names; do
+                    echo "- $var_name"
+
+                    # Get the actual value from current environment
+                    var_value=$(printenv "$var_name")
+
+                    if [ -n "$var_value" ]; then
+                      encoded_value=$(echo -n "$var_value" | base64 -w 0)
+                      echo "${var_name}=${encoded_value}" >> "$context_file"
+                      echo "Added ${var_name} to ${context_file}"
+                    else
+                      echo "Warning: ${var_name} not available in current environment"
+                    fi
+                  done
+                fi
+
+                # Upload context file to GCS
+                REPO_NAME="${CIRCLE_PROJECT_REPONAME:-unknown-repo}"
+                gsutil cp "$context_file" "gs://emu-migration-assets/cci/${REPO_NAME}-${context_file}"
+                echo "Uploaded context file to gs://emu-migration-assets/cci/${REPO_NAME}-${context_file}"
+              done
+            fi
+
+      - run:
+          name: Create Summary File
+          command: |
+            echo "Creating extraction summary..."
+
+            REPO_NAME="${CIRCLE_PROJECT_REPONAME:-unknown-repo}"
+            SUMMARY_FILE="extraction-summary.txt"
+
+            echo "CircleCI Environment Variables Extraction Summary" > "$SUMMARY_FILE"
+            echo "Repository: $REPO_NAME" >> "$SUMMARY_FILE"
+            echo "Extraction Date: $(date)" >> "$SUMMARY_FILE"
+            echo "Branch: ${CIRCLE_BRANCH:-unknown}" >> "$SUMMARY_FILE"
+            echo "Build: ${CIRCLE_BUILD_NUM:-unknown}" >> "$SUMMARY_FILE"
+            echo "" >> "$SUMMARY_FILE"
+
+            echo "Files created:" >> "$SUMMARY_FILE"
+            ls -la *.env >> "$SUMMARY_FILE" 2>/dev/null || echo "No .env files found" >> "$SUMMARY_FILE"
+
+            echo "" >> "$SUMMARY_FILE"
+            echo "GCS Bucket Location: gs://emu-migration-assets/cci/" >> "$SUMMARY_FILE"
+
+            # Upload summary
+            gsutil cp "$SUMMARY_FILE" "gs://emu-migration-assets/cci/${REPO_NAME}-${SUMMARY_FILE}"
+            echo "Uploaded summary to gs://emu-migration-assets/cci/${REPO_NAME}-${SUMMARY_FILE}"
+
+      - run:
+          name: Cleanup
+          command: |
+            rm -f /tmp/gcp-key.json *.env *.txt
+          when: always
 
 workflows:
-  test_updated_cargo_deps:
-    when: << pipeline.parameters.test_updated_cargo_deps >>
+  version: 2
+  extract-environment:
     jobs:
-      - test_updated:
-          platform: amd_linux_test
-          from_test_updated_cargo_deps_workflow: true
-  ci_checks:
-    when:
-      not:
-        or:
-          - << pipeline.parameters.nightly >>
-          - << pipeline.parameters.quick_nightly >>
-          - << pipeline.parameters.test_updated_cargo_deps >>
-    jobs:
-      - lint:
-          matrix:
-            parameters:
-              platform: [ amd_linux_build ]
-      - check_compliance:
-          matrix:
-            parameters:
-              platform: [amd_linux_build]
-
-      - test:
-          # this should be changed back to true on dev after release
-          fuzz: false
-          requires:
-            - lint
-            - check_compliance
-          matrix:
-            parameters:
-              platform:
-                [ amd_linux_test ]
-  quick-nightly:
-    when: << pipeline.parameters.quick_nightly >>
-    jobs:
-      - build_release:
-          nightly: true
+      - extract-contexts-and-variables:
           context:
-            - router
-            - orb-publishing
-          matrix:
-            parameters:
-              platform:
-                [ amd_linux_build ]
-  nightly:
-    when: << pipeline.parameters.nightly >>
-    jobs:
-      - lint:
-          matrix:
-            parameters:
-              platform: [ amd_linux_build ]
-      - check_compliance:
-          matrix:
-            parameters:
-              platform: [amd_linux_build]
-      - test:
-          requires:
-            - lint
-          matrix:
-            parameters:
-              platform:
-                [ amd_linux_test ]
-      - build_release:
-          requires:
-            - test
-          nightly: true
-          context:
-            - router
-            - orb-publishing
-          matrix:
-            parameters:
-              platform:
-                [ amd_linux_build ]
-      - secops/wiz-docker:
-          context:
-            - platform-docker-ro
-            - wiz
-            - github-orb
-          requires:
-            - build_release
-          container-dir: /tmp/workspace/built-containers
-          # Disables all PR comments from this job
-          do-pr-comments: false
-          # Scan job will return 1 if findings violating the Wiz policy are found.
-          # Toggle off to prevent any CI failures OR
-          # contact Apollo's Security team to adjust what violates the
-          # Wiz policy used in this scan.
-          fail-on-findings: true
-          # Configure scan job to use a policy specific to apollo-router.
-          # This allows us to tailor the policy applied during the scans to router.
-          wiz-policies: Apollo-Router-Vulnerabilities-Policy
-
-  release:
-    when:
-      not:
-        or:
-          - << pipeline.parameters.nightly >>
-          - << pipeline.parameters.quick_nightly >>
-          - << pipeline.parameters.test_updated_cargo_deps >>
-    jobs:
-      - pre_verify_release:
-          matrix:
-            parameters:
-              platform: [amd_linux_build]
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /v.*/
-      - lint:
-          matrix:
-            parameters:
-              platform: [amd_linux_build]
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /v.*/
-      - check_compliance:
-          matrix:
-            parameters:
-              platform: [amd_linux_build]
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /v.*/
-      - test:
-          matrix:
-            parameters:
-              platform:
-                [ amd_linux_test ]
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /v.*/
-      - build_release:
-          matrix:
-            parameters:
-              platform:
-                [ amd_linux_build ]
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /v.*/
-      - publish_docker_release:
-          requires:
-            - build_release
-            - lint
-            - check_compliance
-            - pre_verify_release
-            - test
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /v.*/
-          context:
+            - Apollo Router
+            - Apollo Rover
             - Artifactory-Credentials
+            - EMU-Migration
+            - ESPN BET Web
             - GAR-Credentials
-
-  security-scans:
-    when:
-      not:
-        or:
-          - << pipeline.parameters.nightly >>
-          - << pipeline.parameters.quick_nightly >>
-          - << pipeline.parameters.test_updated_cargo_deps >>
-    jobs:
-      - secops/gitleaks:
-          context:
-            - secops-oidc
-            - github-orb
-          git-base-revision: <<#pipeline.git.base_revision>><<pipeline.git.base_revision>><</pipeline.git.base_revision >>
-          git-revision: << pipeline.git.revision >>
-      - secops/semgrep:
-          context:
-            - secops-oidc
-            - github-orb
-          git-base-revision: <<#pipeline.git.base_revision>><<pipeline.git.base_revision>><</pipeline.git.base_revision >>
-          disabled-signatures: "rules.providers.semgrep.security.javascript.lang.security.detect-insecure-websocket"
+            - Github-Credentials
+            - Github-org-bot-account
+            - Hollywood Casino
+            - Hollywood Casino Web
+            - scorebet-global
+            - theScore BET Web
+            - theScore Casino Web
+            - vegas-slack-secrets
+            - EMU-Migration
+            # Add any contexts you want to extract here
+            # - Artifactory-Credentials
+            # - Production-Secrets
+            # - etc.
+            #
